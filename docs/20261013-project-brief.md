@@ -55,17 +55,17 @@ Subscriptions have become unavoidable for users, who often find themselves subsc
 A subscription record has the following attributes:
 
 - `id`: the id of the subscription. Unique, uuidv4
-- `name`: the name of the subscription. Unique within the database.
+- `name`: the name of the subscription. Unique within the database. An opaque label (not required to be a domain).
 - `group`: Can optionally be set to group subscriptions together.
 - `tags`: Array of strings. Can optionally be set to add tags to the subscription.
 - `notes`: A string. Can optionally be set to add notes to the subscription.
-- `icon`: A base64-encoded favicon of the subscription. Fetched from a favicon api, using the first part of the subscription name as the domain (i.e. split the name on slash and take the first part). Optional.
+- `icon`: A base64-encoded favicon of the subscription. Best-effort fetch from a favicon api using the first segment of the name before `/` as the domain; left empty if lookup fails. Optional.
 - `url`: A website URL from which the subscription can be managed (cancelled/renewed).
 
 A subscription can have multiple, strictly non-overlapping cycles, i.e. it can be stopped and started again. Each cycle has its own start and end date. In addition, the price of a subscription can change over time, and this is modeled by creating a new cycle. Thus each subscription cycle has the following attributes:
 - `id`: the id of the cycle. Unique within the database, uuidv4
 - `subscription_id`: the id of the subscription
-- `frequency`: (integer) the monthly frequency of the subscription, e.g 1 = monthly, 3 = quarterly, 6 = semiannual, 12 = yearly, 24 = every 2 years.
+- `frequency`: (integer) the monthly frequency of the subscription, e.g 1 = monthly, 3 = quarterly, 6 = semiannual, 12 = yearly, 24 = every 2 years. v1 supports month-based frequencies only.
 - `cost`: Required. The cost of the subscription, in the subscription's currency, which can be different from the database's default currency.
   - `currency`: the currency of the subscription cost, e.g. USD, EUR, GBP, etc.
   - `amount`: (decimal) the amount of the subscription cost, e.g. 14.00
@@ -80,14 +80,14 @@ A subscription can be associated with one or more reminders, which are triggered
 - `note`: (string) a note to display when the reminder is triggered
 - `date`: the date on which to trigger the reminder, e.g. 2021-01-01
 
-The user can set database-scoped preferences, such as database name and default currency.
+The user can set database-scoped preferences, such as database display name (label only; the file path is chosen separately) and default currency.
 
-When calculating total costs, the program should convert the costs to the user's default currency using either the exact exchange rate of the date of the cost or the approximate exchange rate of the date the cycle starts, depending on a database-scoped preference set by the user. The user's default currency is stored in the preferences table. Exchange rates are retrieved from online sources when first needed and cached in the database. An exchange rate has the following attributes:
+When converting to the default currency for payments and totals, a database-scoped preference chooses **live exchange rate** (use the exchange rate for each payment date) or **approximate exchange rate** (use each cycle's stored `approximate_exchanged_amount`). `approximate_exchanged_amount` is always stored on each cycle. With **approximate exchange rate**, payments and totals use those stored amounts only. With **live exchange rate**, they use rates from the `exchange_rates` table, fetched from online sources and cached when missing. The `exchange_rates` table is used and populated only when the preference is **live exchange rate**. An exchange rate has the following attributes:
 - `currency`: the base currency of the exchange rate, e.g. USD, EUR, GBP, etc.
 - `rate`: (decimal) the exchange rate, e.g. 1.12 units of the default currency per 1 unit of currency
 - `date`: Scopes the exchange rate to a specific date.
 
-If the user's default currency changes, the exchange rates table is truncated and repopulated with exchange rates for the new currency, and approximate exchanged amounts are recalculated for all cycles. The user can set a database-scoped preference to use approximate exchanged amounts for payments and totals, which eliminates the need to retrieve current exchange rates (except when adding a new cycle). When using approximate exchanged amounts, the exchange rates table is not used and not populated.
+If the default currency changes, `approximate_exchanged_amount` is recalculated for all cycles. In addition, the exchange rates table and, assuming the preference is **live exchange rate**, it is repopulated for the new default currency.
 
 As `subtill` evolves, the data model may be extended to support more features. This introduces a need to version the database schema. The database schema is versioned using the `golang-migrate/migrate` package.
 - Migrations are embedded in the program and are run automatically when a database is opened and the schema is outdated.
@@ -97,10 +97,10 @@ As `subtill` evolves, the data model may be extended to support more features. T
 
 The core features of `subtill` are:
 
-- Track subscriptions: Add a new subscription, Cancel a subscription, Renew a subscription, List, Edit, Delete subscriptions and cycles, Search, sort and filter subscriptions by name, group, tags, extrapolated current monthly/yearly/lifetime cost, start date, end date,lifetime duration (i.e. number of months subscribed across all cycles)
-- Payments: List all payments for a subscription. Payments are derived from subscription cycles and exchange rates, not stored in the database.
-- Reports: Total cost of specific subscriptions, subscription groups or all subscriptions since a specific date or for all time. Total lifetime cost of specific subscriptions. Total cost of all subscriptions by month (past or future)
-- Reminders: Set reminders for cancelling or renewing a subscription, List active reminders, Let user snooze reminders and mark reminders as completed. Snooze updates the reminder's date in the database, marking it as complete deletes the reminder from the database.
+- Track subscriptions: Add a new subscription, Cancel a subscription, Renew a subscription, List, Edit, Delete subscriptions and cycles, Search, sort and filter subscriptions by name, group, tags, extrapolated current monthly/yearly/lifetime cost, start date, end date, lifetime duration (i.e. number of months subscribed across all cycles)
+- Payments: List all payments for a subscription. Payments are derived from subscription cycles (`starts_on` may be any day of the month; each charge and a cycle's `ends_on` fall on that same day every `frequency` months) and the active exchange-rate preference, not stored in the database.
+- Reports (Web UI and desktop UI only): Total cost of specific subscriptions, subscription groups or all subscriptions since a specific date or for all time; lifetime totals; cost by month (past or future). Built client-side from `list`, `payments`, and `total`.
+- Reminders: Set reminders for cancelling or renewing a subscription; list current and upcoming reminders in the Web UI and desktop UI; on desktop, OS notifications when a reminder is due. Snooze updates the reminder's date; marking complete deletes the reminder.
 
 ## Interfaces
 
@@ -110,12 +110,14 @@ Note: Interface mode flags (e.g. `--cmd`, `--mcp`, `--http`) cannot be combined.
 
 The program works on the command line and exposes its features through a series of commands:
 
-- `add`: add a new subscription, or renew it if it already exists and is inactive (i.e. start a new cycle)
+- `add`: add a new subscription; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change)
 - `cancel`: end a subscription (i.e. end the current cycle)
 - `delete`: completely delete a subscription and all its associated cycles and reminders, as if it was never added
-- `list`: display a list of subscriptions that match specific search criteria
-- `payments`: display a log of payments for subscriptions that match specific search criteria
-- `total`: display total cost of payments for subscriptions that match specific search criteria
+- `edit`: edit subscription metadata or an existing cycle
+- `list`: display a list of subscriptions that match filter criteria
+- `payments`: display a log of payments for subscriptions that match specific filter criteria
+- `total`: display total cost of payments for subscriptions that match specific filter criteria
+- `reminder`: add, list, snooze, and complete reminders (same semantics as the data model)
 
 The cli also provides additional commands for initializing the database with specific preferences, and also updating the database preferences.
 - `init`: initialize the database with specific preferences
@@ -206,17 +208,18 @@ $ subtill --db ./sub.db --http --port 8000 --token my-secret-token
 API started on http://localhost:8000/api
 Swagger documentation at http://localhost:8000/api/docs
 Authorization Token: my-secret-token # not printed unless autogenerated
+Web UI available at http://localhost:8000/#login/<token> #token not printed unless autogenerated. #login without a token prompts the visitor for a token.
 ```
 
 If --port is not provided, a random available high port is assigned.
 
-If --token is not provided, a random token is autogenerated and printed to stdout. A token can be provided either via the `--token` flag or via the `SUBTILL_TOKEN` environment variable.
+If --token is not provided, a random token is autogenerated. A token can be provided either via the `--token` flag or via the `SUBTILL_TOKEN` environment variable.
 
 The listener binds to `127.0.0.1` by default. A `--bind <ip>` flag can be used to bind to a different address, such as `0.0.0.0` to bind to all interfaces.
 
 The API is available at `http://localhost:8000/api`, with html swagger documentation at `http://localhost:8000/api/docs`.
 
-The program has a web UI, built with React, Tailwind and Shadcn UI. For routing, hash routing is used. The UI is available at `http://localhost:8000/`.
+The program has a web UI, built with React, Tailwind and Shadcn UI. For routing, hash routing is used. The UI is available at `http://localhost:8000/`. The `#login/<token>` route stores the bearer token for subsequent API calls.
 
 The web UI calls the backend through the rest api. The web UI performs data fetching through Tanstack Query with a [default query function](https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function), which takes the query key and maps it to a rest api route.
 
@@ -225,7 +228,7 @@ The rest api has feature parity with the command line interface, with the except
 ### Desktop GUI
 
 The web ui is wrapped in a desktop GUI using Wails. The desktop GUI is different from the web UI in the following aspects:
-- When first launched, user lands on a screen that allows them to create a new database or open an existing database file from disk. They can also reopen from a list of the most recently opened databases.
+- When first launched, user lands on a screen that allows them to create a new database or open an existing database file from disk. Creating a database prompts for file location, display name, and preferences (same as `init`), then creates the file, runs migrations, and stores preferences. They can also reopen from a list of the most recently opened databases.
 - The desktop GUI allows users to switch between databases
 
 The desktop GUI performs data fetching through Tanstack Query with a [default query function](https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function), which takes the query key and maps it to a wails binding.
