@@ -3,7 +3,7 @@ name: Subtill scaffolding bootstrap
 overview: Bootstrap Wails3 + Go (desktop default, --cmd, --mcp, --api) with skeleton internal packages, desktop React 19 frontend, Playwright E2E (Wails server mode), OpenAPI 3.1 pipeline, tooling, AGENTS.md, and README. Product stack per docs/prd/20261013-project-brief.md.
 todos:
   - id: install-tooling
-    content: Verify asdf Go 1.25+ and Node; wails3 + golangci-lint v2 on PATH; pin swag/v2 via go.mod tool directive
+    content: Verify asdf Go 1.25+ and Node; wails3 + golangci-lint v2 on PATH; go.mod tool directives for swag/v2 and migrate/v4 cmd
     status: pending
   - id: wails-init-merge
     content: wails3 init (react) to temp; merge into repo; go.mod go 1.25+ with ignore ./frontend/node_modules and ./e2e
@@ -18,7 +18,7 @@ todos:
     content: e2e/ Playwright smoke; server mode + --config-path; oxlint/oxfmt
     status: pending
   - id: taskfile-vscode
-    content: Taskfile ensure:embeds, lint, fmt, test, test:integration, e2e, openapi; .vscode tasks → wails3 task only
+    content: Taskfile ensure:embeds, lint, fmt, test, test:integration, e2e, openapi, migrate:create; .vscode tasks → wails3 task only
     status: pending
   - id: vscode-agents-readme
     content: extensions.json, settings.json, AGENTS.md, README
@@ -72,7 +72,7 @@ ignore (
 
 **Go tests:** Unit = `*_test.go` (`go test ./...`). Integration = `*_integration_test.go` with `//go:build integration`; **`test:integration`** = `go test -tags integration ./internal/http/... ./internal/mcp/...`. Wails **`server`** tag is for server-mode binaries only, not integration tests.
 
-**Tooling:** golangci-lint v2 on PATH ([`.golangci.yml`](.golangci.yml) `version: "2"`); swag v2 via `go mod` **tool** + `go tool swag init --v3.1`; frontend/e2e npm: oxlint, oxfmt, vitest / Playwright.
+**Tooling:** golangci-lint v2 on PATH ([`.golangci.yml`](.golangci.yml) `version: "2"`); **`go mod` tools** — `go tool swag` (`--v3.1` for OpenAPI), `go tool migrate` (author new SQL migrations; **same v4 version** as library `require`); runtime migrations still applied in-app via embed + migrate library. Frontend/e2e npm: oxlint, oxfmt, vitest / Playwright.
 
 ## Target layout
 
@@ -119,17 +119,18 @@ Then:
 2. Remove demo GreetService; stub Wails services; wire `internal/desktop`.
 3. **`go.mod`:** `go 1.25.4+` + **`ignore`** block (above).
 4. **`frontend/embed.go`:** `//go:embed all:dist` → desktop only.
-5. Migrations embedded under `internal/core/migrate/`.
+5. Migrations embedded under `internal/core/migrate/`; commit at least one pair under `migrations/` (bootstrap: `go tool migrate create -ext sql -dir internal/core/migrate/migrations -seq init` after tools below).
 6. `.gitignore`: `frontend/dist`, `bin/`, `node_modules`, e2e artifacts.
 
 ```bash
 go get github.com/jmoiron/sqlx \
-  github.com/golang-migrate/migrate/v4 \
-  github.com/golang-migrate/migrate/v4/database/sqlite \
+  github.com/golang-migrate/migrate/v4@v4.18.2 \
+  github.com/golang-migrate/migrate/v4/database/sqlite@v4.18.2 \
   github.com/modelcontextprotocol/go-sdk/mcp \
   modernc.org/sqlite \
   github.com/swaggo/http-swagger/v2@v2.0.3-0.20250902111949-1340604bd9f5
 go get -tool github.com/swaggo/swag/v2/cmd/swag@v2.0.0-rc6
+go get -tool github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.2
 go mod tidy
 ```
 
@@ -176,11 +177,14 @@ Extend root [`Taskfile.yml`](Taskfile.yml) without breaking Wails `build/` inclu
 | `test` | ensure:embeds | `go test ./...`; frontend `npm run test:run` |
 | `test:integration` | ensure:embeds | `go test -tags integration ./internal/http/... ./internal/mcp/...` |
 | `openapi` | ensure:embeds | `go generate ./internal/http/...` |
+| `migrate:create` | — | `go tool migrate create -ext sql -dir internal/core/migrate/migrations -seq {{.CLI_ARGS}}` (e.g. `wails3 task migrate:create -- add_subscriptions`) |
 | `e2e` | `build:server` | `cd e2e && npx playwright test` |
 
 Optional: `check` → lint, test, test:integration.
 
-**`.vscode/tasks.json`:** labels `subtill: lint|fmt|test|test (integration)|e2e|openapi|dev|build` → `wails3 task …`, `"cwd": "${workspaceFolder}"`.
+**`.vscode/tasks.json`:** labels `subtill: lint|fmt|test|test (integration)|e2e|openapi|migrate:create|dev|build` → `wails3 task …`, `"cwd": "${workspaceFolder}"`.
+
+**Note:** `go tool migrate … up` against SQLite is for ad-hoc dev only; the app applies embedded migrations at runtime. Keep CLI version aligned with `migrate/v4` in `go.mod`.
 
 ## Phase 5 — Quality config + skeleton tests
 
@@ -195,11 +199,11 @@ Optional: `check` → lint, test, test:integration.
 
 ## Phase 7 — AGENTS.md
 
-Pointers only (no duplicate essay): layout (`internal/core` + adapters); **`wails3 task`** + `ensure:embeds`; `go.mod` ignore; unit vs `integration` tests; OpenAPI `/swagger` vs `/api`; desktop-only UI; migrations path; bindings regen; E2E = Playwright server mode; Windows `PrepareHeadless()`.
+Pointers only (no duplicate essay): layout (`internal/core` + adapters); **`wails3 task`** + `ensure:embeds`; `go.mod` ignore; unit vs `integration` tests; OpenAPI `/swagger` vs `/api`; desktop-only UI; migrations in `internal/core/migrate/migrations/` — new files via **`wails3 task migrate:create`** (`go tool migrate`); bindings regen; E2E = Playwright server mode; Windows `PrepareHeadless()`.
 
 ## Phase 8 — README
 
-Prerequisites, setup (`install:frontend:deps`, Playwright browsers), `wails3 task -list`, run modes, Taskfile commands, recorded **Wails build output path**, Windows console note for headless flags.
+Prerequisites, setup (`install:frontend:deps`, Playwright browsers), `wails3 task -list`, run modes, Taskfile commands (`migrate:create` for schema changes), recorded **Wails build output path**, Windows console note for headless flags.
 
 ## Phase 9 — Verification
 
