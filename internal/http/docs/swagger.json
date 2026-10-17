@@ -1,0 +1,55 @@
+{
+    "components": {
+        "schemas": {
+            "handlers.HealthResponse": {
+                "properties": {
+                    "status": {
+                        "example": "ok",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            }
+        },
+        "securitySchemes": {
+            "BearerAuth": {
+                "in": "header",
+                "name": "Authorization",
+                "type": "apiKey"
+            }
+        }
+    },
+    "info": {
+        "description": "Local subscription manager REST API",
+        "title": "subtill API",
+        "version": "0.0.1"
+    },
+    "externalDocs": {
+        "description": "",
+        "url": ""
+    },
+    "paths": {
+        "/api/health": {
+            "get": {
+                "description": "Returns API health status",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/handlers.HealthResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "summary": "Health check",
+                "tags": [
+                    "health"
+                ]
+            }
+        }
+    },
+    "openapi": "3.1.0"
+}

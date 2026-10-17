@@ -1,0 +1,17 @@
+{
+  "name": "subtill-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "oxlint .",
+    "fmt": "oxfmt .",
+    "fmt:check": "oxfmt --check .",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.1",
+    "oxfmt": "^0.16.0",
+    "oxlint": "^1.16.0",
+    "typescript": "^5.8.3"
+  }
+}

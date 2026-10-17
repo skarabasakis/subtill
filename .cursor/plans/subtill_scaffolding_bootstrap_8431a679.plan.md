@@ -4,32 +4,32 @@ overview: Bootstrap Wails3 + Go (desktop default, --cmd, --mcp, --api) with skel
 todos:
   - id: install-tooling
     content: Verify asdf Go 1.25+ and Node; wails3 + golangci-lint v2 on PATH; go.mod tool directives for swag/v2 and migrate/v4 cmd
-    status: pending
+    status: completed
   - id: wails-init-merge
     content: wails3 init (react) to temp; merge into repo; go.mod go 1.25+ with ignore ./frontend/node_modules and ./e2e
-    status: pending
+    status: completed
   - id: go-skeleton
     content: internal/* packages, main dispatch, Windows console attach, deps, OpenAPI/swag pipeline, integration-tagged http/mcp tests
-    status: pending
+    status: completed
   - id: frontend-tooling
     content: React 19, Tailwind/shadcn, TanStack (Wails bindings), oxlint/oxfmt/vitest, Vite → frontend/dist
-    status: pending
+    status: completed
   - id: e2e-scaffold
     content: e2e/ Playwright smoke; server mode + --config-path; oxlint/oxfmt
-    status: pending
+    status: completed
   - id: taskfile-vscode
     content: Taskfile ensure:embeds, lint, fmt, test, test:integration, e2e, openapi, migrate:create; .vscode tasks → wails3 task only
     status: pending
   - id: vscode-agents-readme
     content: extensions.json, settings.json, AGENTS.md, README
-    status: pending
+    status: completed
 isProject: false
 ---
 
 # Subtill scaffolding bootstrap
 
-**Module:** `github.com/skarabasakis/subtill`  
-**Brief:** [docs/prd/20261013-project-brief.md](docs/prd/20261013-project-brief.md)  
+**Module:** `github.com/skarabasakis/subtill`
+**Brief:** [docs/prd/20261013-project-brief.md](docs/prd/20261013-project-brief.md)
 **Versions:** [`.tool-versions`](.tool-versions) — Go **1.25+**, Node 24.x; [`go.mod`](go.mod) `go` line matches asdf.
 
 ## Architecture

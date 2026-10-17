@@ -1,0 +1,21 @@
+{
+  "recommendations": [
+    "golang.go",
+    "golangci.golangci-lint",
+    "eriyc.wails-vscode-extension",
+    "bradlc.vscode-tailwindcss",
+    "oxc.oxc-vscode",
+    "vitest.explorer",
+    "ms-playwright.playwright",
+    "editorconfig.editorconfig",
+    "redhat.vscode-yaml",
+    "42crunch.vscode-openapi",
+    "qwtel.sqlite-viewer",
+    "github.vscode-github-actions",
+    "GARAIOAG.garaio-vscode-unwanted-recommendations"
+  ],
+  "unwantedRecommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode"
+  ]
+}

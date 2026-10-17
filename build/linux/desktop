@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=subtill
+Comment=Local subscription manager
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/subtill %u
+Terminal=false
+Type=Application
+Icon=subtill
+Categories=Utility;
+StartupWMClass=subtill
+
+ 

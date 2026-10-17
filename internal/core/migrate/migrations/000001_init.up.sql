@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS schema_bootstrap (
+    id INTEGER PRIMARY KEY
+);

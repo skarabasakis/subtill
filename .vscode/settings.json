@@ -1,0 +1,28 @@
+{
+  "tailwindCSS.experimental.classRegex": [
+    [
+      "cn\\(([^)]*)\\)",
+      "[\"'`]([^\"'`]*).*?[\"'`]"
+    ]
+  ],
+  "js/ts.tsdk.path": "frontend/node_modules/typescript/lib",
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.formatOnPaste": true,
+    "editor.defaultFormatter": "golang.go"
+  },
+  "go.formatTool": "custom",
+  "go.alternateTools": {
+    "customFormatter": "golangci-lint"
+  },
+  "go.formatFlags": [
+    "fmt",
+    "--stdin",
+    "--no-config"
+  ],
+  "go.lintTool": "golangci-lint",
+  "go.lintFlags": [
+    "--path-mode=abs",
+    "--fast-only"
+  ]
+}

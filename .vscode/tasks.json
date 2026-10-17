@@ -1,0 +1,53 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev",
+      "type": "shell",
+      "command": "wails3 task dev",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "wails3 task build",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "wails3 task lint",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "fmt",
+      "type": "shell",
+      "command": "wails3 task fmt",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "wails3 task test",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "test:integration",
+      "type": "shell",
+      "command": "wails3 task test:integration",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "test:e2e",
+      "type": "shell",
+      "command": "wails3 task test:e2e",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "generate:openapi",
+      "type": "shell",
+      "command": "wails3 task generate:openapi",
+      "options": { "cwd": "${workspaceFolder}" }
+    }
+  ]
+}

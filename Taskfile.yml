@@ -1,0 +1,137 @@
+version: '3'
+
+vars:
+  APP_NAME: "subtill"
+  BIN_DIR: "bin"
+  PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  # Target OS for build/package/run. Defaults to the host OS, and is overridden
+  # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation. The
+  # tasks below dispatch to the matching platform Taskfile via this variable.
+  GOOS: '{{.GOOS | default OS}}'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+  linux: ./build/linux/Taskfile.yml
+  ios: ./build/ios/Taskfile.yml
+  android: ./build/android/Taskfile.yml
+
+tasks:
+  build:
+    summary: Builds the application
+    cmds:
+      - task: "{{.GOOS}}:build"
+
+  package:
+    summary: Packages a production build of the application
+    cmds:
+      - task: "{{.GOOS}}:package"
+
+  run:
+    summary: Runs the application
+    cmds:
+      - task: "{{.GOOS}}:run"
+
+  dev:
+    summary: Runs the application in development mode
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  install:msix:tools:
+    summary: Installs tools required for Windows MSIX packaging
+    cmds:
+      - task: windows:install:msix:tools
+
+  setup:docker:
+    summary: Builds Docker image for cross-compilation (~800MB download)
+    cmds:
+      - task: common:setup:docker
+
+  build:server:
+    summary: Builds the application in server mode (no GUI, HTTP server only)
+    cmds:
+      - task: common:build:server
+
+  run:server:
+    summary: Runs the application in server mode
+    cmds:
+      - task: common:run:server
+
+  build:docker:
+    summary: Builds a Docker image for server mode deployment
+    cmds:
+      - task: common:build:docker
+
+  run:docker:
+    summary: Builds and runs the Docker image
+    cmds:
+      - task: common:run:docker
+
+  install:frontend:deps:
+    summary: Install frontend dependencies (npm by default)
+    cmds:
+      - task: common:install:frontend:deps
+
+  install:e2e:deps:
+    summary: Install Playwright e2e npm dependencies
+    dir: e2e
+    cmds:
+      - npm install
+
+  ensure:embeds:
+    dir: .
+    cmds:
+      - mkdir -p frontend/dist
+
+  lint:
+    dir: .
+    deps: [ensure:embeds]
+    cmds:
+      - golangci-lint run ./...
+      - cd frontend && npm run lint
+      - cd e2e && npm run lint
+
+  fmt:
+    dir: .
+    deps: [ensure:embeds]
+    cmds:
+      - golangci-lint fmt ./...
+      - cd frontend && npm run fmt
+      - cd e2e && npm run fmt
+
+  test:
+    dir: .
+    deps: [ensure:embeds]
+    cmds:
+      - go test ./...
+      - cd frontend && npm run test:run
+
+  test:integration:
+    dir: .
+    deps: [ensure:embeds]
+    cmds:
+      - go test -tags integration ./internal/http/... ./internal/mcp/...
+
+  test:e2e:
+    dir: .
+    deps:
+      - task: build:server
+        vars:
+          DEV: "true"
+    cmds:
+      - cd e2e && npx playwright test
+
+  generate:openapi:
+    dir: .
+    deps: [ensure:embeds]
+    env:
+      TMPDIR: /tmp
+    cmds:
+      - go generate ./internal/http/...
+
+  migrate:create:
+    dir: .
+    cmds:
+      - migrate create -ext sql -dir internal/core/migrate/migrations -seq {{.CLI_ARGS}}
