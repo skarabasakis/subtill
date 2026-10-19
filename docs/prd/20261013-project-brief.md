@@ -24,6 +24,7 @@ Subscriptions have become unavoidable for users, who often find themselves subsc
   - Database: SQLite
     - DB access layer: `jmoiron/sqlx` package
     - Schema Migrations: `golang-migrate/migrate` package
+  - Decimals: `github.com/govalues/decimal` package
   - Desktop GUI Framework: Wails3
   - Testing: built-in `testing` package
   - Adapters:
@@ -50,42 +51,53 @@ Subscriptions have become unavoidable for users, who often find themselves subsc
 
 ## Data Model
 
+Constraints that are trivially expressible in SQL (`NOT NULL`, `UNIQUE`, `CHECK` on ranges and enums, foreign keys) are part of the schema. Invariants spanning multiple rows (e.g. non-overlapping cycles) are enforced at the application layer.
+
+Decimal values are stored as `TEXT` in SQLite. No decimal arithmetic happens in the database; it is performed in Go using `govalues/decimal`. Decimals are also passed as strings, never as numbers, everywhere they cross a boundary: between Go and JS, in CLI JSON output, and in MCP and REST inputs and outputs; the frontend uses a decimal library (e.g. decimal.js) for any decimal calculations.
+
 A subscription record has the following attributes:
 
-- `id`: the id of the subscription. Unique, uuidv4
-- `name`: the name of the subscription. Unique within the database. An opaque label (not required to be a domain).
-- `group`: Can optionally be set to group subscriptions together.
-- `tags`: Array of strings. Can optionally be set to add tags to the subscription.
+- `id`: the id of the subscription. Unique, uuidv7
+- `name`: the name of the subscription. Unique within the database, case-insensitive (`COLLATE NOCASE`). An opaque label (not required to be a domain).
+- `group`: A string. Can optionally be set to group subscriptions together.
+- `tags`: Array of strings. Can optionally be set to add tags to the subscription. Stored in a separate `subscription_tags` table with columns `id` (uuidv7), `subscription_id` (foreign key to the subscription) and `tag` (string, case-insensitive, `COLLATE NOCASE`). The same tag can't be added twice to a subscription (`subscription_id`, `tag` is unique).
 - `notes`: A string. Can optionally be set to add notes to the subscription.
-- `icon`: A base64-encoded favicon of the subscription. Best-effort fetch from a favicon api using the first segment of the name before `/` as the domain; left empty if lookup fails. Optional.
-- `url`: A website URL from which the subscription can be managed (cancelled/renewed).
+- `icon`: A base64-encoded PNG favicon of the subscription. Best-effort fetch from a favicon api using the first segment of the name before `/` as the domain; lookup fails if the name is not domain-like. Left empty if lookup fails. The application is responsible for retrieving the favicon in PNG format. Optional.
+- `url`: A website URL from which the subscription can be managed (cancelled/renewed). Optional.
 
-A subscription can have multiple, strictly non-overlapping cycles, i.e. it can be stopped and started again. Each cycle has its own start and end date. In addition, the price of a subscription can change over time, and this is modeled by creating a new cycle. Thus each subscription cycle has the following attributes:
-- `id`: the id of the cycle. Unique within the database, uuidv4
+A subscription has at least one cycle and can have multiple, strictly non-overlapping cycles (both enforced at the application layer), i.e. it can be stopped and started again. Each cycle has its own start and end date. In addition, the price of a subscription can change over time, and this is modeled by creating a new cycle. Thus each subscription cycle has the following attributes:
+- `id`: the id of the cycle. Unique within the database, uuidv7
 - `subscription_id`: the id of the subscription
 - `frequency`: (integer) the monthly frequency of the subscription, e.g 1 = monthly, 3 = quarterly, 6 = semiannual, 12 = yearly, 24 = every 2 years. v1 supports month-based frequencies only.
 - `cost`: Required. The cost of the subscription, in the subscription's currency, which can be different from the database's default currency.
   - `currency`: the currency of the subscription cost, e.g. USD, EUR, GBP, etc.
   - `amount`: (decimal) the amount of the subscription cost, e.g. 14.00
-- `approximate_exchanged_amount`: (decimal) The approximate cost amount for the cycle, in the database's default currency. Required. Equals amount if cost currency matches the database's default currency.
+- `approximate_exchanged_amount`: (decimal) The approximate cost amount for the cycle, in the database's default currency. Required. Equals amount if cost currency matches the database's default currency. Otherwise, calculated from exchange rates retrieved from online sources at the moment the cycle is added or its amount is edited.
 - `starts_on`: the date the subscription was charged and the cycle started, e.g. 2021-01-01
-- `ends_on`: the date the cycle ends. It can be null if the subscription is ongoing.
+- `ends_on`: the date the cycle ends, exclusive (no charge occurs on it). It can be null if the subscription is ongoing. Fixed-term and cancelled subscriptions are not distinguished: both expire on `ends_on`. `ends_on` need not fall on a charge date; a cycle ending mid-period is equivalent to one ending at the end of that period (e.g. a monthly cycle Jan 1 - Jan 29 is equivalent to Jan 1 - Feb 1). Two cycles are consecutive when the first cycle's `ends_on` equals the second cycle's `starts_on`.
 
-A subscription can be associated with one or more reminders, which are triggered on a specific date and remain active until deleted. A reminder has the following attributes:
-- `id`: the id of the reminder. Unique, uuidv4
+A subscription can be associated with one or more reminders, which are triggered on a specific date and remain active until deleted. All existing reminders are pending; clearing (marking complete) a reminder deletes it. Duplicate reminders (same subscription, action and date) are allowed. A reminder has the following attributes:
+- `id`: the id of the reminder. Unique, uuidv7
 - `subscription_id`: the id of the subscription
 - `action`: (enum) the action to perform when the reminder is triggered, e.g. "cancel", "renew"
 - `note`: (string) a note to display when the reminder is triggered
 - `date`: the date on which to trigger the reminder, e.g. 2021-01-01
+- `notification_sent`: (boolean) whether the OS notification for the reminder has been sent
 
-The user can set database-scoped preferences, such as database display name (label only; the file path is chosen separately) and default currency.
+The user can set database-scoped preferences, such as database display name (label only; the file path is chosen separately), default currency, and preferred time of day to receive notifications (integer hour 0-23, default 7).
 
 When converting to the default currency for payments and totals, a database-scoped preference chooses **live exchange rate** (use the exchange rate for each payment date) or **approximate exchange rate** (use each cycle's stored `approximate_exchanged_amount`). `approximate_exchanged_amount` is always stored on each cycle. With **approximate exchange rate**, payments and totals use those stored amounts only. With **live exchange rate**, they use rates from the `exchange_rates` table, fetched from online sources and cached when missing. The `exchange_rates` table is used and populated only when the preference is **live exchange rate**. An exchange rate has the following attributes:
 - `currency`: the base currency of the exchange rate, e.g. USD, EUR, GBP, etc.
 - `rate`: (decimal) the exchange rate, e.g. 1.12 units of the default currency per 1 unit of currency
 - `date`: Scopes the exchange rate to a specific date.
 
-If the default currency changes, `approximate_exchanged_amount` is recalculated for all cycles. In addition, the exchange rates table and, assuming the preference is **live exchange rate**, it is repopulated for the new default currency.
+(`currency`, `date`) is unique.
+
+Converted amounts (`approximate_exchanged_amount`, `rate`) do not record the currency they are denominated in, by design: they are always in the current default currency.
+If the default currency changes, `approximate_exchanged_amount` is recalculated for all cycles.
+In addition, if the default currency changes and the preference is **live exchange rate**, the exchange rates table is truncated and repopulated for the new default currency.
+These recalculations, truncations and repopulations run atomically in a single transaction, so converted columns never mix currencies.
+Exchange rates are fetched from online sources.
 
 As `subtill` evolves, the data model may be extended to support more features. This introduces a need to version the database schema. The database schema is versioned using the `golang-migrate/migrate` package.
 - Migrations are embedded in the program and are run automatically when a database is opened and the schema is outdated.
@@ -96,9 +108,9 @@ As `subtill` evolves, the data model may be extended to support more features. T
 The core features of `subtill` are:
 
 - Track subscriptions: Add a new subscription, Cancel a subscription, Renew a subscription, List, Edit, Delete subscriptions and cycles, Search, sort and filter subscriptions by name, group, tags, extrapolated current monthly/yearly/lifetime cost, start date, end date, lifetime duration (i.e. number of months subscribed across all cycles)
-- Payments: List all payments for a subscription. Payments are derived from subscription cycles (`starts_on` may be any day of the month; each charge and a cycle's `ends_on` fall on that same day every `frequency` months) and the active exchange-rate preference, not stored in the database.
+- Payments: List all payments for a subscription. Payments are derived from subscription cycles (`starts_on` may be any day of the month; each charge falls on that same day every `frequency` months, computed from `starts_on`; in shorter months the day is clamped to the last day of the month and clamps back afterwards, e.g. Jan 31 → Feb 28 → Mar 31) and the active exchange-rate preference, not stored in the database.
 - Reports (desktop GUI only): Total cost of specific subscriptions, subscription groups or all subscriptions since a specific date or for all time; lifetime totals; cost by month (past or future). Built client-side from `list`, `payments`, and `total`.
-- Reminders: Set reminders for cancelling or renewing a subscription; list current and upcoming reminders in the desktop GUI; OS notifications when a reminder is due. Snooze updates the reminder's date; marking complete deletes the reminder.
+- Reminders: Set reminders for cancelling or renewing a subscription; list current and upcoming reminders in the desktop GUI; OS notifications when a reminder is due. Snooze updates the reminder's date and resets `notification_sent` to false; marking complete deletes the reminder.
 
 ## Interfaces
 
@@ -106,10 +118,12 @@ Note: Interface mode flags (e.g. `--cmd`, `--mcp`, `--api`) cannot be combined. 
 
 ### Command Line Interface (`subtill --cmd`)
 
+Note: Command names and arguments are indicative, not final. For the final list of commands and arguments, see the [Operations](20261018-operations.md) and [Command Line Flags](20261018-command-line-flags.md) documents.
+
 The program works on the command line and exposes its features through a series of commands:
 
 - `add`: add a new subscription; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change)
-- `cancel`: end a subscription (i.e. end the current cycle)
+- `cancel`: end a subscription (i.e. end the current cycle); optionally deletes the subscription's pending "cancel" reminders
 - `delete`: completely delete a subscription and all its associated cycles and reminders, as if it was never added
 - `edit`: edit subscription metadata or an existing cycle
 - `list`: display a list of subscriptions that match filter criteria
