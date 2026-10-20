@@ -2,6 +2,13 @@
 
 Rules and layout for automated contributors working on subtill.
 
+## Documentation
+
+File names are prefixed with the date of creation in `YYYYMMDD-` format.
+
+- Product Requirements Documents: `docs/prd/` (product feature descriptions, requirements, and user stories)
+- Architectural Decision Records: `docs/adr/` (technical design documents, documentation of technical decisions, trade-offs, and rationale)
+
 ## Layout
 
 - Business logic: `internal/core` (domain, services, store, migrations under `internal/core/migrate/migrations/`).
@@ -19,8 +26,6 @@ Use **`wails3 task <name>`** from the repo root ([`Taskfile.yml`](Taskfile.yml))
 - **`test:integration`**: `go test -tags integration` for `internal/http` and `internal/mcp`.
 - **`migrate:create`**: `migrate create` (CLI on `PATH`; see CONTRIBUTING) for new SQL migrations.
 - **`openapi`**: regenerates Swagger under `internal/http/docs`.
-
-Go **1.25+** with `go.mod` **`ignore`** for `./frontend/node_modules` and `./e2e`. Do not set VS Code `go.testTags` globally.
 
 ## API
 
