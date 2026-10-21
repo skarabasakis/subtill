@@ -39,8 +39,8 @@ This document provides a list of operations that can be performed on an existing
 
 ### Preferences
 
-- `preferences.get`: get current values of database preferences (e.g. database name, default currency, default currency conversion)
-- `preferences.set`: set values of database preferences (e.g. database name, default currency, default currency conversion)
+- `preferences.get`: get current values of database preferences (e.g. default currency, currency conversion mode)
+- `preferences.set`: set values of database preferences (e.g. default currency, currency conversion mode)
 
 ### Utilities
 
@@ -385,10 +385,8 @@ Set database preferences. Omitted (nil) fields are left unchanged. Changing `Cur
 ```go
 // validate:"at_least_one_set" on PreferencesSetRequest
 type PreferencesSetRequest struct {
-  DisplayName      *string            `json:"displayName,omitempty"`
-  Currency         *string            `json:"currency,omitempty"         validate:"omitempty,currency"`
-  NotificationHour *int               `json:"notificationHour,omitempty" validate:"omitempty,min=0,max=23"`
-  ExchangeRateMode *ExchangeRateMode  `json:"exchangeRateMode,omitempty" validate:"omitempty,oneof=approximate live"`
+  Currency         *string           `json:"currency,omitempty"         validate:"omitempty,currency"`
+  CurrencyConversionMode *CurrencyConversionMode `json:"currencyConversionMode,omitempty" validate:"omitempty,oneof=approximate live"`
 }
 
 type PreferencesSetResponse struct{}
@@ -527,7 +525,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 
 #### preferences.set
 
-- `exchange_rate_unavailable` — `currency` or `exchangeRateMode` changes require repopulating rates or recalculating stored costs and conversion fails—the whole update is rolled back.
+- `exchange_rate_unavailable` — `currency` or `currencyConversionMode` changes require repopulating rates or recalculating stored costs and conversion fails—the whole update is rolled back.
 
 #### icon.fetch
 
@@ -583,18 +581,15 @@ type ReminderRecord struct {
   TriggerOn      time.Date      `json:"triggerOn"`
 }
 
-type ExchangeRateMode string
+type CurrencyConversionMode string
 const (
-  ExchangeRateModeApproximate ExchangeRateMode = "approximate"
-  ExchangeRateModeLive        ExchangeRateMode = "live"
+  CurrencyConversionModeApproximate CurrencyConversionMode = "approximate"
+  CurrencyConversionModeLive        CurrencyConversionMode = "live"
 )
 
 type PreferencesRecord struct {
-  DisplayName      string           `json:"displayName"`
-  Currency         string           `json:"currency"`
-  NotificationHour int              `json:"notificationHour"`
-  ExchangeRateMode ExchangeRateMode `json:"exchangeRateMode"`
-  Views            string           `json:"views"` // JSON object; empty object when unset
+  Currency               string                 `json:"currency"`
+  CurrencyConversionMode CurrencyConversionMode `json:"currencyConversionMode"`
 }
 ```
 
@@ -654,7 +649,7 @@ type Payment struct {
   BillingPeriodID  string    `json:"billingPeriodId"`
   BillingCurrency  string    `json:"billingCurrency"`
   BillingCost      string    `json:"billingCost"`
-  Cost             string    `json:"cost"` // in the database default currency, converted according to the exchange rate mode
+  Cost             string    `json:"cost"` // in the database default currency, converted according to the currency conversion mode
 }
 ```
 
