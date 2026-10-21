@@ -764,7 +764,7 @@ type PaymentFilters struct {
 
 type ReminderFilters struct {
   Name      StringFilter    `json:"name"      validate:"dive"`
-  Action    StringFilter    `json:"action"    validate:"dive"`
+  Action    ReminderAction  `json:"action"    validate:"omitempty,oneof=cancel renew custom"`
   TriggerOn DateRangeFilter `json:"triggerOn" validate:"dive"`
 }
 ```
