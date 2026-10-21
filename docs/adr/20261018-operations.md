@@ -44,8 +44,8 @@ This document provides a list of operations that can be performed on an existing
 
 ### Utilities
 
-- `icon.fetch`: resolve a base64-encoded PNG from a favicon URL, a domain, or another subscription’s stored `icon` (for use in `subscription.start` or `subscription.edit`)
-- `currency.convert`: convert an amount in a billing currency to the database preferred currency at a given exchange date; the returned `converted.amount` is the `cost` passed to `subscription.start`, `subscription.edit`, `billingPeriod.add`, or `billingPeriod.edit`
+- `icon.fetch`: resolve a base64-encoded PNG from a favicon URL, a domain, or another subscription’s stored `icon` (or set `iconAuto` on `subscription.start` / `subscription.edit`)
+- `currency.convert`: convert an amount in a billing currency to the database preferred currency at a given exchange date; the returned `converted.amount` is the `cost` passed manually or via `costAuto` on `subscription.start`, `subscription.edit`, `billingPeriod.add`, or `billingPeriod.edit`
 
 ## Specification of Operations
 
@@ -121,7 +121,11 @@ type SubscriptionGetByNameResponse struct {
 
 #### subscription.start
 
-Add a new subscription; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change). When both `billingCurrency` and `billingCost` are omitted, the service sets `billing_currency` to the database preferred currency and `billing_cost` to `cost` before persist.
+Add a new subscription; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change). When both `billingCurrency` and `billingCost` are omitted, the service sets `billing_currency` to the database preferred currency and `billing_cost` to `cost` before persist (apply this before `costAuto`).
+
+When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to `name` (after validation, before persist). The request must not include `icon` when `iconAuto` is true.
+
+When `costAuto` is true, the service sets `cost` via `currency.convert` using `billingCurrency`, `billingCost`, and `exchangeOn` equal to the minimum of the effective `startOn` (today when zero) and the current date. The request must not include `cost` when `costAuto` is true. `costAuto` requires `billingCost` in the request; billing defaults do not satisfy `required_with` unless `billingCost` is present on the request.
 
 ```go
 type SubscriptionAddRequest struct {
@@ -129,14 +133,16 @@ type SubscriptionAddRequest struct {
   Group           string    `json:"group"`
   Tags            []string  `json:"tags"`
   Notes           string    `json:"notes"`
-  Icon            string    `json:"icon"` // use `icon.fetch` when a favicon is desired; empty string allowed
+  Icon            string    `json:"icon" validate:"excluded_if=IconAuto true"`
+  IconAuto        bool      `json:"iconAuto,omitempty"`
   URL             string    `json:"url"`
   StartOn         time.Date `json:"startOn"` // defaults to today when zero; empty allowed
   Frequency       int       `json:"frequency"  validate:"required,gt=0"`
   Duration        int       `json:"duration"   validate:"gte=0,multiple_of=Frequency"`
   BillingCurrency string    `json:"billingCurrency" validate:"omitempty,currency,required_with=BillingCost"`
   BillingCost     string    `json:"billingCost" validate:"omitempty,decimal,required_with=BillingCurrency"`
-  Cost            string    `json:"cost"         validate:"required,decimal"` // preferred-currency amount from `currency.convert`
+  Cost            string    `json:"cost"         validate:"omitempty,decimal,required_without=CostAuto,excluded_if=CostAuto true"`
+  CostAuto        bool      `json:"costAuto,omitempty" validate:"required_with=BillingCost"`
 }
 
 type SubscriptionAddResponse struct {
@@ -150,6 +156,10 @@ Edit subscription metadata or the latest billing period. Omitted (nil) fields ar
 
 `addTags` and `removeTags` add or remove individual tags without replacing the full set. They are idempotent: adding a tag that already exists or removing a tag that does not exist is a no-op. When more than one tag field is present in a single request, apply in order: `tags` replacement, then `removeTags`, then `addTags`.
 
+When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to the subscription name after applying other metadata fields in the same request (or the stored name if `name` is omitted). The request must not include `icon` when `iconAuto` is true (including a non-nil `icon` set to `""`).
+
+When `costAuto` is true on the latest billing period, the service sets `cost` via `currency.convert` using `billingCurrency`, `billingCost`, and `exchangeOn` equal to the minimum of the effective `startOn` of that period (after applying coalesced request fields) and the current date. The request must not include `cost` when `costAuto` is true. `costAuto` requires `billingCost` in the request.
+
 ```go
 // validate:"at_least_one_set" on SubscriptionEditRequest
 type SubscriptionEditRequest struct {
@@ -162,14 +172,16 @@ type SubscriptionEditRequest struct {
   AddTags    *[]string  `json:"addTags,omitempty"`
   RemoveTags *[]string  `json:"removeTags,omitempty"`
   Notes      *string    `json:"notes,omitempty"`
-  Icon       *string    `json:"icon,omitempty"` // use `icon.fetch` when setting a favicon
+  Icon       *string    `json:"icon,omitempty" validate:"excluded_if=IconAuto true"` // or `iconAuto`; or use `icon.fetch` manually
+  IconAuto   *bool      `json:"iconAuto,omitempty"`
   URL        *string    `json:"url,omitempty"`
 
   // Latest billing period
   Frequency       *int    `json:"frequency,omitempty"       validate:"omitempty,gt=0"`
   BillingCurrency *string `json:"billingCurrency,omitempty" validate:"omitempty,currency,required_with=BillingCost"`
   BillingCost     *string `json:"billingCost,omitempty"     validate:"omitempty,decimal,required_with=BillingCurrency"`
-  Cost            *string `json:"cost,omitempty"            validate:"omitempty,decimal,required_with=BillingCurrency,required_with=BillingCost"`
+  Cost            *string `json:"cost,omitempty"            validate:"omitempty,decimal,required_with=BillingCurrency,required_with=BillingCost,excluded_if=CostAuto true"`
+  CostAuto        *bool   `json:"costAuto,omitempty"        validate:"required_with=BillingCost"`
 }
 
 type SubscriptionEditResponse struct{}
@@ -215,7 +227,9 @@ type SubscriptionDeleteResponse struct{}
 
 #### billingPeriod.add
 
-Add a billing period to a subscription (past, present, or future dates). The period must not overlap any existing billing period of the subscription. When both `billingCurrency` and `billingCost` are omitted, the service sets `billing_currency` to the database preferred currency and `billing_cost` to `cost` before persist.
+Add a billing period to a subscription (past, present, or future dates). The period must not overlap any existing billing period of the subscription. When both `billingCurrency` and `billingCost` are omitted, the service sets `billing_currency` to the database preferred currency and `billing_cost` to `cost` before persist (apply this before `costAuto`).
+
+When `costAuto` is true, the service sets `cost` via `currency.convert` using `billingCurrency`, `billingCost`, and `exchangeOn` equal to the minimum of `startOn` and the current date. The request must not include `cost` when `costAuto` is true. `costAuto` requires `billingCost` in the request.
 
 ```go
 type BillingPeriodAddRequest struct {
@@ -225,7 +239,8 @@ type BillingPeriodAddRequest struct {
   Frequency       int       `json:"frequency"       validate:"required,gt=0"`
   BillingCurrency string    `json:"billingCurrency" validate:"omitempty,currency,required_with=BillingCost"`
   BillingCost     string    `json:"billingCost"     validate:"omitempty,decimal,required_with=BillingCurrency"`
-  Cost            string    `json:"cost"            validate:"required,decimal"` // preferred-currency amount from `currency.convert`
+  Cost            string    `json:"cost"            validate:"omitempty,decimal,required_without=CostAuto,excluded_if=CostAuto true"`
+  CostAuto        bool      `json:"costAuto,omitempty" validate:"required_with=BillingCost"`
 }
 
 type BillingPeriodAddResponse struct{}
@@ -235,6 +250,8 @@ type BillingPeriodAddResponse struct{}
 
 Edit a billing period. Omitted (nil) fields are left unchanged. The edited billing period must not overlap any other billing period of the subscription.
 
+When `costAuto` is true, the service sets `cost` via `currency.convert` using `billingCurrency`, `billingCost`, and `exchangeOn` equal to the minimum of the effective `startOn` of the period (after applying coalesced request fields) and the current date. The request must not include `cost` when `costAuto` is true. `costAuto` requires `billingCost` in the request.
+
 ```go
 type BillingPeriodEditRequest struct {
   ID              string     `json:"id"              validate:"required"`
@@ -243,7 +260,8 @@ type BillingPeriodEditRequest struct {
   Frequency       *int       `json:"frequency,omitempty"       validate:"omitempty,gt=0"`
   BillingCurrency *string    `json:"billingCurrency,omitempty" validate:"omitempty,currency,required_with=BillingCost"`
   BillingCost     *string    `json:"billingCost,omitempty"     validate:"omitempty,decimal,required_with=BillingCurrency"`
-  Cost            *string    `json:"cost,omitempty"            validate:"omitempty,decimal,required_with=BillingCurrency,required_with=BillingCost"`
+  Cost            *string    `json:"cost,omitempty"            validate:"omitempty,decimal,required_with=BillingCurrency,required_with=BillingCost,excluded_if=CostAuto true"`
+  CostAuto        *bool      `json:"costAuto,omitempty"        validate:"required_with=BillingCost"`
 }
 
 type BillingPeriodEditResponse struct{}
@@ -441,11 +459,15 @@ Operations not listed below rely on struct validation only (for example `subscri
 - `subscription_name_taken` — The request would create a new subscription, but another subscription already has this `name` (case-insensitive). Restarting an **inactive** subscription with the same name is allowed.
 - `invalid_start_on` — `startOn` is in the future when starting a **new** subscription (defaults to today when omitted).
 - `billing_period_not_consecutive` — Ending the current billing period and opening a new one would violate non-overlap or consecutivity (`previous.ends_on` must equal `new.starts_on`).
+- `icon_fetch_failed` — `iconAuto` is true and the favicon could not be resolved for `name` as domain.
+- `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
 
 #### subscription.edit
 
 - `subscription_not_found` — No subscription exists with the given `id`.
 - `subscription_name_taken` — `name` is changed to a value that another subscription already has (case-insensitive).
+- `icon_fetch_failed` — `iconAuto` is true and the favicon could not be resolved for the effective subscription name.
+- `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
 
 #### subscription.cancel
 
@@ -469,6 +491,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 - `subscription_not_found` — No subscription exists with the given `subscriptionId`.
 - `billing_period_overlap` — The new period overlaps an existing billing period on the same subscription.
 - `billing_period_not_consecutive` — The new period does not abut existing periods where required (gaps or crossing boundaries that violate application invariants).
+- `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
 
 #### billingPeriod.edit
 
@@ -477,6 +500,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 - `billing_period_overlap` — The updated period overlaps another period on the same subscription.
 - `billing_period_not_consecutive` — Updated dates break consecutivity with adjacent periods.
 - `cannot_clear_end_on` — `endOn` is cleared on a billing period that is not the latest for its subscription.
+- `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
 
 #### billingPeriod.delete
 
@@ -533,9 +557,9 @@ type BillingPeriodRecord struct {
   StartOn               time.Date `json:"startOn"`
   EndOn                 time.Date `json:"endOn"`
   Frequency             int       `json:"frequency"`
-  BillingCurrency string    `json:"billingCurrency"`
-  BillingCost     string    `json:"billingCost"`
-  Cost            string    `json:"cost"`
+  BillingCurrency       string    `json:"billingCurrency"`
+  BillingCost           string    `json:"billingCost"`
+  Cost                  string    `json:"cost"`
 }
 
 type TagRecord struct {
@@ -580,15 +604,8 @@ type PreferencesRecord struct {
 
 type SubscriptionStatus string
 const (
-  SubscriptionStatusActive   SubscriptionStatus = "active"
-  SubscriptionStatusInactive SubscriptionStatus = "inactive"
-)
-
-type SubscriptionBillingStatus string
-const (
-  ActiveSubscriptionStatusOngoing         ActiveSubscriptionStatus = "ongoing"
-  ActiveSubscriptionStatusCancelScheduled ActiveSubscriptionStatus = "cancelScheduled"
-  ActiveSubscriptionStatusCanceled        ActiveSubscriptionStatus = "canceled"
+  SubscriptionStatusOngoing SubscriptionStatus = "ongoing"
+  SubscriptionStatusEnded   SubscriptionStatus = "ended"
 )
 
 type Subscription struct {
@@ -596,7 +613,7 @@ type Subscription struct {
 
   // Derived fields
   Status                        SubscriptionStatus        `json:"status"`
-  BillingStatus                 SubscriptionBillingStatus `json:"billingStatus"`
+  ScheduledEnd                  boolean `json:"scheduledEnd"`
   StartOn                       time.Date                 `json:"startOn"`
   RestartOn                     time.Date                 `json:"restartOn"` // start of erliest billing period that is consecutive to the latest active billing period
   EndOn                         time.Date                 `json:"endOn"`
@@ -614,6 +631,14 @@ type Subscription struct {
   // Associated records
   BillingPeriods []BillingPeriod `json:"billingPeriods"`
   Reminders      []Reminder      `json:"reminders"`
+}
+
+type BillingPeriod struct {
+  BillingPeriodRecord
+
+  Status          SubscriptionStatus `json:"status"`
+  ScheduledEnd    boolean            `json:"scheduledEnd"`
+  Duration        int                `json:"duration"`
 }
 
 type Reminder struct {
