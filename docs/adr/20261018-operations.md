@@ -39,8 +39,8 @@ This document provides a list of operations that can be performed on an existing
 
 ### Preferences
 
-- `preference.get`: get current values of database preferences (e.g. database name, default currency, default currency conversion)
-- `preference.set`: set values of database preferences (e.g. database name, default currency, default currency conversion)
+- `preferences.get`: get current values of database preferences (e.g. database name, default currency, default currency conversion)
+- `preferences.set`: set values of database preferences (e.g. database name, default currency, default currency conversion)
 
 ### Utilities
 
@@ -72,7 +72,7 @@ Project-registered tags used in request and filter structs (in addition to built
 | `int_range` | Struct-level on `IntegerRangeFilter`: if both bounds are set, `gte < lt`. |
 | `decimal_range` | Struct-level on `DecimalRangeFilter`: if both bounds are set, compare with `govalues/decimal` (`gte < lt`). |
 | `multiple_of` | Cross-field on integers; param is another field name (e.g. `multiple_of=Frequency`). When the divisor field is > 0, value ≥ 0 and `value % divisor == 0`. Validate the divisor with `gt=0` first. Not used on `subscription.cancel` (divisor comes from the database). |
-| `at_least_one_set` | Struct-level: at least one optional pointer field is non-nil (`subscription.edit`, `preference.set`). |
+| `at_least_one_set` | Struct-level: at least one optional pointer field is non-nil (`subscription.edit`, `preferences.set`). |
 
 ### Request and Response schemas
 
@@ -148,18 +148,22 @@ type SubscriptionAddResponse struct {
 
 Edit subscription metadata or the latest billing period. Omitted (nil) fields are left unchanged; non-nil string fields set to `""` clear that value.
 
+`addTags` and `removeTags` add or remove individual tags without replacing the full set. They are idempotent: adding a tag that already exists or removing a tag that does not exist is a no-op. When more than one tag field is present in a single request, apply in order: `tags` replacement, then `removeTags`, then `addTags`.
+
 ```go
 // validate:"at_least_one_set" on SubscriptionEditRequest
 type SubscriptionEditRequest struct {
   ID string `json:"id" validate:"required"`
 
   // Subscription metadata
-  Name  *string    `json:"name,omitempty"`
-  Group *string    `json:"group,omitempty"`
-  Tags  *[]string  `json:"tags,omitempty"` // replaces all tags; [] removes all tags
-  Notes *string    `json:"notes,omitempty"`
-  Icon  *string    `json:"icon,omitempty"` // use `icon.fetch` when setting a favicon
-  URL   *string    `json:"url,omitempty"`
+  Name       *string    `json:"name,omitempty"`
+  Group      *string    `json:"group,omitempty"`
+  Tags       *[]string  `json:"tags,omitempty"`       // replaces all tags; [] removes all tags
+  AddTags    *[]string  `json:"addTags,omitempty"`
+  RemoveTags *[]string  `json:"removeTags,omitempty"`
+  Notes      *string    `json:"notes,omitempty"`
+  Icon       *string    `json:"icon,omitempty"` // use `icon.fetch` when setting a favicon
+  URL        *string    `json:"url,omitempty"`
 
   // Latest billing period
   Frequency       *int    `json:"frequency,omitempty"       validate:"omitempty,gt=0"`
@@ -344,32 +348,32 @@ type ReminderClearRequest struct {
 type ReminderClearResponse struct{}
 ```
 
-#### preference.get
+#### preferences.get
 
 Return the database preferences
 
 ```go
-type PreferenceGetRequest struct{}
+type PreferencesGetRequest struct{}
 
-type PreferenceGetResponse struct {
+type PreferencesGetResponse struct {
   Preferences PreferencesRecord `json:"preferences"`
 }
 ```
 
-#### preference.set
+#### preferences.set
 
 Set database preferences. Omitted (nil) fields are left unchanged. Changing `Currency` recalculates the default-currency cost of all billing periods (and, in live mode, repopulates exchange rates) in a single transaction.
 
 ```go
-// validate:"at_least_one_set" on PreferenceSetRequest
-type PreferenceSetRequest struct {
+// validate:"at_least_one_set" on PreferencesSetRequest
+type PreferencesSetRequest struct {
   DisplayName      *string            `json:"displayName,omitempty"`
   Currency         *string            `json:"currency,omitempty"         validate:"omitempty,currency"`
   NotificationHour *int               `json:"notificationHour,omitempty" validate:"omitempty,min=0,max=23"`
   ExchangeRateMode *ExchangeRateMode  `json:"exchangeRateMode,omitempty" validate:"omitempty,oneof=approximate live"`
 }
 
-type PreferenceSetResponse struct{}
+type PreferencesSetResponse struct{}
 ```
 
 #### icon.fetch
@@ -422,7 +426,7 @@ The conditions below are **logical** errors checked after request validation suc
 
 - `exchange_rate_unavailable` — A conversion needs an exchange rate (`currency.convert`, or payment derivation in **live** mode) and the rate cannot be resolved from cache or online sources for the requested date.
 
-Operations not listed below rely on struct validation only (for example `subscription.list`, `reminder.list`, `preference.get`).
+Operations not listed below rely on struct validation only (for example `subscription.list`, `reminder.list`, `preferences.get`).
 
 #### subscription.get
 
@@ -497,7 +501,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 
 - `reminder_not_found` — No reminder exists with the given `id`.
 
-#### preference.set
+#### preferences.set
 
 - `exchange_rate_unavailable` — `currency` or `exchangeRateMode` changes require repopulating rates or recalculating stored costs and conversion fails—the whole update is rolled back.
 

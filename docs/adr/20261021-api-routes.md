@@ -8,7 +8,7 @@ REST mapping for operations in [Operations](./20261018-operations.md). JSON rout
 - **Request and response bodies** match the operation structs in [Operations](./20261018-operations.md), except:
   - Fields carried in the path (`id`, `subscriptionId`) are omitted from the body.
   - `subscription.get`, `subscription.delete`, `subscription.cancel`, `subscription.resume`, `billingPeriod.delete`, `reminder.clear`, and `reminder.snooze` omit the path `id` from the body; remaining fields stay in the body.
-  - `preference.get` has no body.
+  - `preferences.get` has no body.
 - **List and aggregate reads** (`subscription.list`, `payment.list`, `payment.total`, `reminder.list`) use `GET`. Nested `filter` and `sort` objects are passed as URL-encoded JSON in query parameters `filter` and `sort` (when applicable), using the same shapes as the operation request structs.
 - **Lookup helpers** (`icon.fetch`, `currency.convert`) use `GET` with query parameters matching the operation request fields (after applying documented defaults in the handler before validation).
 
@@ -43,8 +43,8 @@ REST mapping for operations in [Operations](./20261018-operations.md). JSON rout
 
 ## preferences
 
-- `preference.get`: `GET` `/preferences/{id}`
-- `preference.set`: `PATCH` `/preferences/{id}`
+- `preferences.get`: `GET` `/preferences`
+- `preferences.set`: `PATCH` `/preferences`
 
 ## utilities
 
