@@ -1,0 +1,757 @@
+# Operations
+
+This document provides a list of operations that can be performed on an existing subscription database. Each of these operations is exposed through:
+
+- the command line interface (cmd)
+- the API (api)
+- the MCP (mcp)
+
+## List of Operations
+
+### Subscriptions
+
+- `subscription.list`: return a list of subscriptions that match filter criteria, along with their associated billing periods and reminders
+- `subscription.getByName`: return a subscription by name, along with its associated billing periods and reminders
+- `subscription.get`: return a subscription by ID, along with its associated billing periods and reminders
+- `subscription.start`: start or restart a subscription or change the price; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change)
+- `subscription.cancel`: end a subscription (i.e. end the current cycle) and optionally cancel all associated "cancel" reminders
+- `subscription.resume`: restart a subscription (uncancel or extend the latest, still active but canceled, billing period)
+- `subscription.delete`: completely delete a subscription and all its associated cycles and reminders, as if it was never added
+- `subscription.edit`: edit subscription metadata or edit the current billing period
+
+### Billing Periods
+
+- `billingPeriod.add`: add a billing period to a subscription (any dates; must not overlap existing periods)
+- `billingPeriod.edit`: edit a billing period
+- `billingPeriod.delete`: delete a billing period
+
+### Payments
+
+- `payment.list`: display a log of payments for subscriptions that match specific filter criteria
+- `payment.total`: display total cost (either current or projected) of payments for subscriptions that match specific filter criteria
+
+### Reminders
+
+- `reminder.list`: list all reminders
+- `reminder.add`: add a new reminder
+- `reminder.snooze`: add a positive number of calendar days to the reminder's current `triggerOn` and mark its notification as not sent
+- `reminder.clear`: clear a reminder
+
+### Preferences
+
+- `preference.get`: get current values of database preferences (e.g. database name, default currency, default currency conversion)
+- `preference.set`: set values of database preferences (e.g. database name, default currency, default currency conversion)
+
+### Utilities
+
+- `icon.fetch`: resolve a base64-encoded PNG from a favicon URL, a domain, or another subscription’s stored `icon` (for use in `subscription.start` or `subscription.edit`)
+- `currency.convert`: convert an amount in a billing currency to the database preferred currency at a given exchange date; the returned `converted.amount` is the `cost` passed to `subscription.start`, `subscription.edit`, `billingPeriod.add`, or `billingPeriod.edit`
+
+## Specification of Operations
+
+Each operation is described in terms of its:
+
+- name
+- Request params (struct with `json` and `validate` tags)
+  - input data validation rules and related errors
+  - idempotency rules
+- Successful Response (struct with json tags)
+- Error Conditions
+
+Request validation uses [`github.com/go-playground/validator`](https://github.com/go-playground/validator). Apply documented JSON defaults (for example `currency.convert` `amount`, payment `paymentDate` bounds) **before** `validator.Struct`, then run operation logic. Validation failures are rejected before logical checks. Implementations may map validator failures to stable API error codes separately from the logical error codes below.
+
+### Custom validate tags
+
+Project-registered tags used in request and filter structs (in addition to built-in tags such as `required`, `gt`, `gte`, `oneof`, `required_with`, `required_without`, `excluded_with`, `gtfield`, `omitempty`, `dive`):
+
+| Tag | Behavior |
+|-----|----------|
+| `decimal` | Non-empty valid non-negative decimal string (`govalues/decimal` rules). |
+| `currency` | Non-empty supported ISO-like currency code. |
+| `date_range` | Struct-level on `DateRangeFilter`: if both bounds are set, `gte < lt` (calendar dates). |
+| `int_range` | Struct-level on `IntegerRangeFilter`: if both bounds are set, `gte < lt`. |
+| `decimal_range` | Struct-level on `DecimalRangeFilter`: if both bounds are set, compare with `govalues/decimal` (`gte < lt`). |
+| `multiple_of` | Cross-field on integers; param is another field name (e.g. `multiple_of=Frequency`). When the divisor field is > 0, value ≥ 0 and `value % divisor == 0`. Validate the divisor with `gt=0` first. Not used on `subscription.cancel` (divisor comes from the database). |
+| `at_least_one_set` | Struct-level: at least one optional pointer field is non-nil (`subscription.edit`, `preference.set`). |
+
+### Request and Response schemas
+
+#### subscription.list
+
+Return a list of subscriptions that match filter criteria
+
+```go
+type SubscriptionListRequest struct {
+  Filter SubscriptionFilters `json:"filter" validate:"dive"`
+  Sort   SubscriptionSort    `json:"sort"   validate:"dive"`
+}
+
+type SubscriptionListResponse struct {
+  Subscriptions []Subscription `json:"subscriptions"`
+}
+```
+
+#### subscription.get
+
+Return a subscription by ID, along with its associated billing periods and reminders
+
+```go
+type SubscriptionGetRequest struct {
+  ID string `json:"id" validate:"required"`
+}
+
+type SubscriptionGetResponse struct {
+  Subscription Subscription `json:"subscription"`
+}
+```
+
+#### subscription.getByName
+
+Return a subscription by name (case-insensitive exact match), along with its associated billing periods and reminders
+
+```go
+type SubscriptionGetByNameRequest struct {
+  Name string `json:"name" validate:"required"`
+}
+
+type SubscriptionGetByNameResponse struct {
+  Subscription Subscription `json:"subscription"`
+}
+```
+
+#### subscription.start
+
+Add a new subscription; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change). When both `billingCurrency` and `billingCost` are omitted, the service sets `billing_currency` to the database preferred currency and `billing_cost` to `cost` before persist.
+
+```go
+type SubscriptionAddRequest struct {
+  Name            string    `json:"name"         validate:"required"`
+  Group           string    `json:"group"`
+  Tags            []string  `json:"tags"`
+  Notes           string    `json:"notes"`
+  Icon            string    `json:"icon"` // use `icon.fetch` when a favicon is desired; empty string allowed
+  URL             string    `json:"url"`
+  StartOn         time.Date `json:"startOn"` // defaults to today when zero; empty allowed
+  Frequency       int       `json:"frequency"  validate:"required,gt=0"`
+  Duration        int       `json:"duration"   validate:"gte=0,multiple_of=Frequency"`
+  BillingCurrency string    `json:"billingCurrency" validate:"omitempty,currency,required_with=BillingCost"`
+  BillingCost     string    `json:"billingCost" validate:"omitempty,decimal,required_with=BillingCurrency"`
+  Cost            string    `json:"cost"         validate:"required,decimal"` // preferred-currency amount from `currency.convert`
+}
+
+type SubscriptionAddResponse struct {
+  Subscription Subscription `json:"subscription"`
+}
+```
+
+#### subscription.edit
+
+Edit subscription metadata or the latest billing period. Omitted (nil) fields are left unchanged; non-nil string fields set to `""` clear that value.
+
+```go
+// validate:"at_least_one_set" on SubscriptionEditRequest
+type SubscriptionEditRequest struct {
+  ID string `json:"id" validate:"required"`
+
+  // Subscription metadata
+  Name  *string    `json:"name,omitempty"`
+  Group *string    `json:"group,omitempty"`
+  Tags  *[]string  `json:"tags,omitempty"` // replaces all tags; [] removes all tags
+  Notes *string    `json:"notes,omitempty"`
+  Icon  *string    `json:"icon,omitempty"` // use `icon.fetch` when setting a favicon
+  URL   *string    `json:"url,omitempty"`
+
+  // Latest billing period
+  Frequency       *int    `json:"frequency,omitempty"       validate:"omitempty,gt=0"`
+  BillingCurrency *string `json:"billingCurrency,omitempty" validate:"omitempty,currency,required_with=BillingCost"`
+  BillingCost     *string `json:"billingCost,omitempty"     validate:"omitempty,decimal,required_with=BillingCurrency"`
+  Cost            *string `json:"cost,omitempty"            validate:"omitempty,decimal,required_with=BillingCurrency,required_with=BillingCost"`
+}
+
+type SubscriptionEditResponse struct{}
+```
+
+#### subscription.cancel
+
+End a subscription (i.e. set the end date of the current billing period) and optionally delete its pending "cancel" reminders
+
+```go
+type SubscriptionCancelRequest struct {
+  ID                    string `json:"id"                       validate:"required"`
+  Duration              int    `json:"duration,omitempty"       validate:"gte=0"` // see Notes; multiple-of-frequency checked in service
+  DeleteCancelReminders bool   `json:"deleteCancelReminders,omitempty"`
+}
+
+type SubscriptionCancelResponse struct{}
+```
+
+#### subscription.resume
+
+Uncancel a subscription whose latest billing period is still active but has an end date, by clearing that end date
+
+```go
+type SubscriptionResumeRequest struct {
+  ID string `json:"id" validate:"required"`
+}
+
+type SubscriptionResumeResponse struct{}
+```
+
+#### subscription.delete
+
+Completely delete a subscription and all its associated billing periods, tags and reminders
+
+```go
+type SubscriptionDeleteRequest struct {
+  ID string `json:"id" validate:"required"`
+}
+
+type SubscriptionDeleteResponse struct{}
+```
+
+#### billingPeriod.add
+
+Add a billing period to a subscription (past, present, or future dates). The period must not overlap any existing billing period of the subscription. When both `billingCurrency` and `billingCost` are omitted, the service sets `billing_currency` to the database preferred currency and `billing_cost` to `cost` before persist.
+
+```go
+type BillingPeriodAddRequest struct {
+  SubscriptionID  string    `json:"subscriptionId"  validate:"required"`
+  StartOn         time.Date `json:"startOn"         validate:"required"`
+  EndOn           time.Date `json:"endOn"          validate:"required,gtfield=StartOn"`
+  Frequency       int       `json:"frequency"       validate:"required,gt=0"`
+  BillingCurrency string    `json:"billingCurrency" validate:"omitempty,currency,required_with=BillingCost"`
+  BillingCost     string    `json:"billingCost"     validate:"omitempty,decimal,required_with=BillingCurrency"`
+  Cost            string    `json:"cost"            validate:"required,decimal"` // preferred-currency amount from `currency.convert`
+}
+
+type BillingPeriodAddResponse struct{}
+```
+
+#### billingPeriod.edit
+
+Edit a billing period. Omitted (nil) fields are left unchanged. The edited billing period must not overlap any other billing period of the subscription.
+
+```go
+type BillingPeriodEditRequest struct {
+  ID              string     `json:"id"              validate:"required"`
+  StartOn         *time.Date `json:"startOn,omitempty"`
+  EndOn           *time.Date `json:"endOn,omitempty"` // can only be cleared on the latest billing period
+  Frequency       *int       `json:"frequency,omitempty"       validate:"omitempty,gt=0"`
+  BillingCurrency *string    `json:"billingCurrency,omitempty" validate:"omitempty,currency,required_with=BillingCost"`
+  BillingCost     *string    `json:"billingCost,omitempty"     validate:"omitempty,decimal,required_with=BillingCurrency"`
+  Cost            *string    `json:"cost,omitempty"            validate:"omitempty,decimal,required_with=BillingCurrency,required_with=BillingCost"`
+}
+
+type BillingPeriodEditResponse struct{}
+```
+
+#### billingPeriod.delete
+
+Delete a billing period. A subscription's only billing period can't be deleted; use `subscription.delete` instead.
+
+```go
+type BillingPeriodDeleteRequest struct {
+  ID string `json:"id" validate:"required"`
+}
+
+type BillingPeriodDeleteResponse struct{}
+```
+
+#### payment.list
+
+Return the payments of subscriptions that match filter criteria, ordered by date, then subscription name
+
+```go
+type PaymentListRequest struct {
+  Filter PaymentFilters `json:"filter" validate:"dive"`
+}
+
+type PaymentListResponse struct {
+  Payments []Payment `json:"payments"`
+}
+```
+
+#### payment.total
+
+Return the total cost, in the database default currency, of the payments of subscriptions that match filter criteria. Projected totals are obtained by setting `filter.paymentDate.lt` to a future date.
+
+```go
+type PaymentTotalRequest struct {
+  Filter PaymentFilters `json:"filter" validate:"dive"`
+}
+
+type PaymentTotalResponse struct {
+  BillingCurrency string `json:"billingCurrency,omitempty"` // set only when every payment shares one billing currency and it differs from the preferred currency
+  BillingCost     string `json:"billingCost,omitempty"`     // sum of `billingCost` in that currency; omitted with `billingCurrency`
+  Cost            string `json:"cost"`                      // total in the database preferred currency
+}
+```
+
+#### reminder.list
+
+Return reminders that match filter criteria
+
+```go
+type ReminderListRequest struct {
+  Filter ReminderFilters `json:"filter" validate:"dive"`
+  Sort   ReminderSort    `json:"sort"   validate:"dive"`
+}
+
+type ReminderListResponse struct {
+  Reminders []Reminder `json:"reminders"`
+}
+```
+
+#### reminder.add
+
+Add a reminder to a subscription. For `cancel` and `renew`, a non-empty `customNote` is allowed but ignored at the service layer (not persisted).
+
+```go
+type ReminderAddRequest struct {
+  SubscriptionID string         `json:"subscriptionId" validate:"required"`
+  Action         ReminderAction `json:"action"         validate:"required,oneof=cancel renew custom"`
+  CustomNote     string         `json:"customNote,omitempty" validate:"required_if=Action custom"`
+  TriggerOn      time.Date      `json:"triggerOn"      validate:"required"`
+}
+
+type ReminderAddResponse struct {
+  Reminder Reminder `json:"reminder"`
+}
+```
+
+#### reminder.snooze
+
+Add `days` calendar days to the reminder's current `triggerOn` and mark its notification as not sent. The service sets `triggerOn` to `currentTriggerOn.AddDays(days)`.
+
+```go
+type ReminderSnoozeRequest struct {
+  ID   string `json:"id"   validate:"required"`
+  Days int    `json:"days" validate:"required,gt=0"`
+}
+
+type ReminderSnoozeResponse struct{}
+```
+
+#### reminder.clear
+
+Mark a reminder as complete, deleting it
+
+```go
+type ReminderClearRequest struct {
+  ID string `json:"id" validate:"required"`
+}
+
+type ReminderClearResponse struct{}
+```
+
+#### preference.get
+
+Return the database preferences
+
+```go
+type PreferenceGetRequest struct{}
+
+type PreferenceGetResponse struct {
+  Preferences PreferencesRecord `json:"preferences"`
+}
+```
+
+#### preference.set
+
+Set database preferences. Omitted (nil) fields are left unchanged. Changing `Currency` recalculates the default-currency cost of all billing periods (and, in live mode, repopulates exchange rates) in a single transaction.
+
+```go
+// validate:"at_least_one_set" on PreferenceSetRequest
+type PreferenceSetRequest struct {
+  DisplayName      *string            `json:"displayName,omitempty"`
+  Currency         *string            `json:"currency,omitempty"         validate:"omitempty,currency"`
+  NotificationHour *int               `json:"notificationHour,omitempty" validate:"omitempty,min=0,max=23"`
+  ExchangeRateMode *ExchangeRateMode  `json:"exchangeRateMode,omitempty" validate:"omitempty,oneof=approximate live"`
+}
+
+type PreferenceSetResponse struct{}
+```
+
+#### icon.fetch
+
+Return a base64-encoded PNG. Exactly one of `fromImageUrl`, `fromDomain`, or `fromSubscriptionId` must be provided.
+
+When `fromImageUrl` or `fromDomain` is set, fetch a favicon over the network. When `fromSubscriptionId` is set, load the subscription by ID and return its stored `icon` field as-is (no network fetch).
+
+```go
+type IconFetchRequest struct {
+  FromImageUrl       string `json:"fromImageUrl,omitempty"       validate:"required_without=FromDomain FromSubscriptionId,excluded_with=FromDomain FromSubscriptionId"`
+  FromDomain         string `json:"fromDomain,omitempty"         validate:"required_without=FromImageUrl FromSubscriptionId,excluded_with=FromImageUrl FromSubscriptionId"`
+  FromSubscriptionId string `json:"fromSubscriptionId,omitempty" validate:"required_without=FromImageUrl FromDomain,excluded_with=FromImageUrl FromDomain"`
+}
+
+type IconFetchResponse struct {
+  Icon string `json:"icon"` // base64-encoded PNG
+}
+```
+
+#### currency.convert
+
+Convert an amount in a billing currency to the database preferred currency, using the exchange rate on a specific date
+
+```go
+type CurrencyConvertRequest struct {
+  Currency   string    `json:"currency"           validate:"required,currency"`
+  Amount     string    `json:"amount,omitempty"     validate:"omitempty,decimal"` // defaults to 1 before validate
+  ExchangeOn time.Date `json:"exchangeOn,omitempty"` // defaults to the current date before validate
+}
+
+type CurrencyAmount struct {
+  Currency string `json:"currency"`
+  Amount   string `json:"amount"`
+}
+
+type CurrencyConvertResponse struct {
+  Source     CurrencyAmount `json:"source"`     // echoes request `currency` and `amount` (after defaults)
+  Converted  CurrencyAmount `json:"converted"`  // preferred currency and converted amount
+  Rate       string         `json:"rate"`       // units of preferred currency per 1 unit of `source.currency`
+  ExchangeOn time.Date      `json:"exchangeOn"` // echoes request `exchangeOn` (after defaults)
+}
+```
+
+### Error Conditions
+
+The conditions below are **logical** errors checked after request validation succeeds. They are returned as explicit, stable error codes (implementations may attach a human-readable message).
+
+#### Cross-cutting
+
+- `exchange_rate_unavailable` — A conversion needs an exchange rate (`currency.convert`, or payment derivation in **live** mode) and the rate cannot be resolved from cache or online sources for the requested date.
+
+Operations not listed below rely on struct validation only (for example `subscription.list`, `reminder.list`, `preference.get`).
+
+#### subscription.get
+
+- `subscription_not_found` — No subscription exists with the given `id`.
+
+#### subscription.getByName
+
+- `subscription_not_found` — No subscription exists with the given `name` (case-insensitive exact match).
+
+#### subscription.start
+
+- `subscription_name_taken` — The request would create a new subscription, but another subscription already has this `name` (case-insensitive). Restarting an **inactive** subscription with the same name is allowed.
+- `invalid_start_on` — `startOn` is in the future when starting a **new** subscription (defaults to today when omitted).
+- `billing_period_not_consecutive` — Ending the current billing period and opening a new one would violate non-overlap or consecutivity (`previous.ends_on` must equal `new.starts_on`).
+
+#### subscription.edit
+
+- `subscription_not_found` — No subscription exists with the given `id`.
+- `subscription_name_taken` — `name` is changed to a value that another subscription already has (case-insensitive).
+
+#### subscription.cancel
+
+- `subscription_not_found` — No subscription exists with the given `id`.
+- `subscription_inactive` — The subscription has no billing period that is still active (already fully ended).
+- `invalid_duration` — `duration` is not a multiple of the latest billing period's `frequency`.
+- `already_canceled` — The latest billing period already has an `ends_on` on or before the end date implied by `duration` (no change).
+
+#### subscription.resume
+
+- `subscription_not_found` — No subscription exists with the given `id`.
+- `subscription_inactive` — The subscription is not active (latest billing period has already ended).
+- `subscription_not_cancel_scheduled` — The latest billing period has no `ends_on` (already ongoing) or has already ended.
+
+#### subscription.delete
+
+- `subscription_not_found` — No subscription exists with the given `id`.
+
+#### billingPeriod.add
+
+- `subscription_not_found` — No subscription exists with the given `subscriptionId`.
+- `billing_period_overlap` — The new period overlaps an existing billing period on the same subscription.
+- `billing_period_not_consecutive` — The new period does not abut existing periods where required (gaps or crossing boundaries that violate application invariants).
+
+#### billingPeriod.edit
+
+- `billing_period_not_found` — No billing period exists with the given `id`.
+- `invalid_period` — After applying changes, `endOn` is not strictly after `startOn` (when `endOn` is set).
+- `billing_period_overlap` — The updated period overlaps another period on the same subscription.
+- `billing_period_not_consecutive` — Updated dates break consecutivity with adjacent periods.
+- `cannot_clear_end_on` — `endOn` is cleared on a billing period that is not the latest for its subscription.
+
+#### billingPeriod.delete
+
+- `billing_period_not_found` — No billing period exists with the given `id`.
+- `last_billing_period` — Deleting this period would leave the subscription with no billing periods.
+
+#### payment.list / payment.total
+
+- `exchange_rate_unavailable` — Preferences use **live** exchange rates and a payment in the result set needs a rate that cannot be resolved for its date and billing currency.
+
+`payment.total` uses the same payment derivation and date window as `payment.list`; errors are identical.
+
+#### reminder.add
+
+- `subscription_not_found` — No subscription exists with the given `subscriptionId`.
+
+#### reminder.snooze
+
+- `reminder_not_found` — No reminder exists with the given `id`.
+
+#### reminder.clear
+
+- `reminder_not_found` — No reminder exists with the given `id`.
+
+#### preference.set
+
+- `exchange_rate_unavailable` — `currency` or `exchangeRateMode` changes require repopulating rates or recalculating stored costs and conversion fails—the whole update is rolled back.
+
+#### icon.fetch
+
+- `icon_fetch_failed` — The icon could not be obtained: favicon fetch failed for the given URL or domain; or (when `fromSubscriptionId` is set) no subscription exists with that ID, or the subscription’s stored `icon` is empty. These cases are indistinguishable by error code by design.
+
+#### currency.convert
+
+- `exchange_rate_unavailable` — No rate can be resolved for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today).
+
+## Shared types
+
+### Database Records
+
+```go
+type SubscriptionRecord struct {
+  ID    string   `json:"id"`
+  Name  string   `json:"name"`
+  Group string   `json:"group"`
+  Tags  []string `json:"tags"`
+  Notes string   `json:"notes"`
+  Icon  string   `json:"icon"`
+  URL   string   `json:"url"`
+}
+
+type BillingPeriodRecord struct {
+  ID                    string    `json:"id"`
+  StartOn               time.Date `json:"startOn"`
+  EndOn                 time.Date `json:"endOn"`
+  Frequency             int       `json:"frequency"`
+  BillingCurrency string    `json:"billingCurrency"`
+  BillingCost     string    `json:"billingCost"`
+  Cost            string    `json:"cost"`
+}
+
+type TagRecord struct {
+  ID             string `json:"id"`
+  SubscriptionID string `json:"subscriptionId"`
+  Tag            string `json:"tag"`
+}
+
+type ReminderAction string
+const (
+  ReminderActionCancel ReminderAction = "cancel"
+  ReminderActionRenew  ReminderAction = "renew"
+  ReminderActionCustom ReminderAction = "custom"
+)
+
+type ReminderRecord struct {
+  ID             string         `json:"id"`
+  SubscriptionID string         `json:"subscriptionId"`
+  Action         ReminderAction `json:"action"`
+  CustomNote     string         `json:"customNote"`
+  TriggerOn      time.Date      `json:"triggerOn"`
+}
+
+type ExchangeRateMode string
+const (
+  ExchangeRateModeApproximate ExchangeRateMode = "approximate"
+  ExchangeRateModeLive        ExchangeRateMode = "live"
+)
+
+type PreferencesRecord struct {
+  DisplayName      string           `json:"displayName"`
+  Currency         string           `json:"currency"`
+  NotificationHour int              `json:"notificationHour"`
+  ExchangeRateMode ExchangeRateMode `json:"exchangeRateMode"`
+  Views            string           `json:"views"` // JSON object; empty object when unset
+}
+```
+
+### Domain Models
+
+```go
+
+type SubscriptionStatus string
+const (
+  SubscriptionStatusActive   SubscriptionStatus = "active"
+  SubscriptionStatusInactive SubscriptionStatus = "inactive"
+)
+
+type SubscriptionBillingStatus string
+const (
+  ActiveSubscriptionStatusOngoing         ActiveSubscriptionStatus = "ongoing"
+  ActiveSubscriptionStatusCancelScheduled ActiveSubscriptionStatus = "cancelScheduled"
+  ActiveSubscriptionStatusCanceled        ActiveSubscriptionStatus = "canceled"
+)
+
+type Subscription struct {
+  SubscriptionRecord
+
+  // Derived fields
+  Status                        SubscriptionStatus        `json:"status"`
+  BillingStatus                 SubscriptionBillingStatus `json:"billingStatus"`
+  StartOn                       time.Date                 `json:"startOn"`
+  RestartOn                     time.Date                 `json:"restartOn"` // start of erliest billing period that is consecutive to the latest active billing period
+  EndOn                         time.Date                 `json:"endOn"`
+  Duration                      int                       `json:"duration"`
+  LifetimeDuration              int                       `json:"lifetimeDuration"`
+  Frequency                     int                       `json:"frequency"`
+  BillingCurrency               string                    `json:"billingCurrency"`
+  BillingCost                   string                    `json:"billingCost"`
+  Cost                          string                    `json:"cost"`
+  MonthlyCost                   string                    `json:"monthlyCost"`
+  YearlyCost                    string                    `json:"yearlyCost"`
+  LifetimeCost                  string                    `json:"totalCost"`
+  LifetimeCostInDefaultCurrency string                    `json:"totalCostInDefaultCurrency"`
+
+  // Associated records
+  BillingPeriods []BillingPeriod `json:"billingPeriods"`
+  Reminders      []Reminder      `json:"reminders"`
+}
+
+type Reminder struct {
+  ReminderRecord
+
+  Subscription SubscriptionRecord `json:"subscription"`
+}
+
+type Payment struct {
+  Date             time.Date `json:"date"`
+  SubscriptionID   string    `json:"subscriptionId"`
+  SubscriptionName string    `json:"subscriptionName"`
+  BillingPeriodID  string    `json:"billingPeriodId"`
+  BillingCurrency  string    `json:"billingCurrency"`
+  BillingCost      string    `json:"billingCost"`
+  Cost             string    `json:"cost"` // in the database default currency, converted according to the exchange rate mode
+}
+```
+
+### Sorting
+
+```go
+type SortDirection string
+const (
+  SortDirectionAsc  SortDirection = "asc"
+  SortDirectionDesc SortDirection = "desc"
+)
+
+type SubscriptionSort struct {
+  Field     SubscriptionSortFields `json:"field,omitempty" validate:"omitempty,oneof=id name startOn restartOn endOn duration lifetimeDuration monthlyCost yearlyCost lifetimeCost"`
+  Direction SortDirection          `json:"dir,omitempty"   validate:"omitempty,oneof=asc desc"`
+}
+
+type ReminderSort struct {
+  Field     ReminderSortFields `json:"field,omitempty" validate:"omitempty,oneof=name triggerOn"`
+  Direction SortDirection      `json:"dir,omitempty"   validate:"omitempty,oneof=asc desc"`
+}
+```
+
+#### Sort fields
+
+```go
+type SubscriptionSortFields string
+const (
+  SubscriptionSortFieldID               SubscriptionSortFields = "id"
+  SubscriptionSortFieldName             SubscriptionSortFields = "name"
+  SubscriptionSortFieldStartOn          SubscriptionSortFields = "startOn"
+  SubscriptionSortFieldRestartOn        SubscriptionSortFields = "restartOn"
+  SubscriptionSortFieldEndOn            SubscriptionSortFields = "endOn"
+  SubscriptionSortFieldDuration         SubscriptionSortFields = "duration"
+  SubscriptionSortFieldLifetimeDuration SubscriptionSortFields = "lifetimeDuration"
+  SubscriptionSortFieldMonthlyCost      SubscriptionSortFields = "monthlyCost"
+  SubscriptionSortFieldYearlyCost       SubscriptionSortFields = "yearlyCost"
+  SubscriptionSortFieldLifetimeCost     SubscriptionSortFields = "lifetimeCost"
+)
+
+type ReminderSortFields string
+const (
+  ReminderSortFieldName      ReminderSortFields = "name"
+  ReminderSortFieldTriggerOn ReminderSortFields = "triggerOn"
+)
+```
+
+### Filters
+
+```go
+// validate:"date_range" on DateRangeFilter
+type DateRangeFilter struct {
+  Gte time.Date `json:"gte,omitempty"`
+  Lt  time.Date `json:"lt,omitempty"`
+}
+
+// validate:"int_range" on IntegerRangeFilter
+type IntegerRangeFilter struct {
+  Gte int `json:"gte,omitempty"`
+  Lt  int `json:"lt,omitempty"`
+}
+
+// validate:"decimal_range" on DecimalRangeFilter
+type DecimalRangeFilter struct {
+  Gte string `json:"gte,omitempty" validate:"omitempty,decimal"`
+  Lt  string `json:"lt,omitempty"  validate:"omitempty,decimal"`
+}
+
+type StringFilter struct {
+  Value    string `json:"value,omitempty"`
+  Operator string `json:"operator,omitempty" validate:"omitempty,oneof=contains exact"` // default contains when omitted
+}
+
+type ArrayFilter struct {
+  Values   []string `json:"values,omitempty"`
+  Operator string   `json:"operator,omitempty" validate:"omitempty,oneof=all any"` // default any when omitted
+}
+
+type SubscriptionFilters struct {
+  Name            StringFilter              `json:"name"            validate:"dive"`
+  Group           string                    `json:"group"`
+  Tags            ArrayFilter               `json:"tags"            validate:"dive"`
+  Status          SubscriptionStatus        `json:"status"          validate:"omitempty,oneof=active inactive"`
+  BillingStatus   SubscriptionBillingStatus `json:"billingStatus"   validate:"omitempty,oneof=ongoing cancelScheduled canceled"`
+  StartOn         DateRangeFilter           `json:"startOn"         validate:"dive"`
+  RestartOn       DateRangeFilter           `json:"restartOn"       validate:"dive"`
+  EndOn           DateRangeFilter           `json:"endOn"           validate:"dive"`
+  StartInterval   IntegerRangeFilter        `json:"startInterval"   validate:"dive"`
+  RestartInterval IntegerRangeFilter        `json:"restartInterval" validate:"dive"`
+  EndInterval     IntegerRangeFilter        `json:"endInterval"     validate:"dive"`
+  BillingCurrency string                    `json:"billingCurrency" validate:"omitempty,currency"`
+  BillingCost     DecimalRangeFilter        `json:"billingCost"     validate:"dive"`
+  Cost            DecimalRangeFilter        `json:"cost"            validate:"dive"`
+  Frequency       int                       `json:"frequency"       validate:"omitempty,gt=0"`
+
+  // Filters on derived fields
+  Duration         IntegerRangeFilter `json:"duration"         validate:"dive"`
+  LifetimeDuration IntegerRangeFilter `json:"lifetimeDuration" validate:"dive"`
+
+  MonthlyCost  DecimalRangeFilter `json:"monthlyCost"  validate:"dive"`
+  YearlyCost   DecimalRangeFilter `json:"yearlyCost"   validate:"dive"`
+  LifetimeCost DecimalRangeFilter `json:"lifetimeCost" validate:"dive"`
+}
+
+type PaymentFilters struct {
+  Name        StringFilter       `json:"name"        validate:"dive"`
+  Group       string             `json:"group"`
+  Tags        ArrayFilter        `json:"tags"        validate:"dive"`
+  Status      SubscriptionStatus `json:"status"      validate:"omitempty,oneof=active inactive"`
+  PaymentDate DateRangeFilter    `json:"paymentDate" validate:"dive"` // defaults applied before validate; see Notes
+}
+
+type ReminderFilters struct {
+  Name      StringFilter    `json:"name"      validate:"dive"`
+  Action    StringFilter    `json:"action"    validate:"dive"`
+  TriggerOn DateRangeFilter `json:"triggerOn" validate:"dive"`
+}
+```
+
+## Notes
+
+- Initializing the database is not an operation, since it is not exposed through the API or MCP.
+- Reminder notifications (OS notifications when a reminder is due, and tracking whether they have been sent) are a feature of the desktop application. They are not exposed through the api, mcp or cmd.
+- Not all subscription fields are sortable; only the fields listed in `SubscriptionSortFields` are. For example, subscriptions can't be sorted by group or tags.
+- By design, `subscription.start` and `subscription.cancel` can't take an explicit end date. They accept a `duration` instead: an integer number of months, a multiple of the billing frequency, starting from zero. The end date is derived from it:
+  - `subscription.start`: counted from `startOn`. A duration of 0 starts an ongoing billing period (no end date).
+  - `subscription.cancel`: counted from the next charge date. A duration of 0 ends the subscription on the next charge date, i.e. at the end of the period already paid for.
+- `PaymentFilters.PaymentDate` is required. If it is not provided, it is equivalent to `[null, current_date)`, i.e. all payments before the current date. If only `gte` is provided, `lt` defaults to the current date.
+- Reports on "specific subscriptions" can only be retrieved if the set of subscriptions can be selected with the currently defined filters (name, group, tags, status). Arbitrary sets of subscriptions that share no group or tag can't be reported on in a single request.
