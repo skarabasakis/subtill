@@ -69,8 +69,8 @@ Project-registered tags used in request and filter structs (in addition to built
 | `decimal` | Non-empty valid non-negative decimal string (`govalues/decimal` rules). |
 | `currency` | Non-empty supported ISO-like currency code. |
 | `date_range` | Struct-level on `DateRangeFilter`: if both bounds are set, `gte < lt` (calendar dates). |
-| `int_range` | Struct-level on `IntegerRangeFilter`: if both bounds are set, `gte < lt`. |
-| `decimal_range` | Struct-level on `DecimalRangeFilter`: if both bounds are set, compare with `govalues/decimal` (`gte < lt`). |
+| `int_range` | Struct-level on `IntegerRangeFilter`: if both bounds are set, `gte <= lte`. |
+| `decimal_range` | Struct-level on `DecimalRangeFilter`: if both bounds are set, compare with `govalues/decimal` (`gte <= lte`). |
 | `multiple_of` | Cross-field on integers; param is another field name (e.g. `multiple_of=Frequency`). When the divisor field is > 0, value ≥ 0 and `value % divisor == 0`. Validate the divisor with `gt=0` first. Not used on `subscription.cancel` (divisor comes from the database). |
 | `at_least_one_set` | Struct-level: at least one optional pointer field is non-nil (`subscription.edit`, `preferences.set`). |
 
@@ -152,7 +152,7 @@ type SubscriptionAddResponse struct {
 
 #### subscription.edit
 
-Edit subscription metadata or the latest billing period. Omitted (nil) fields are left unchanged; non-nil string fields set to `""` clear that value.
+Edit subscription metadata or the latest billing period. Omitted (nil) fields are left unchanged. For nullable metadata strings (`group`, `notes`, `icon`, `url`), a non-nil pointer to `""` clears the stored value. `name` is required in the database; when `name` is set it must be non-empty (it cannot be cleared to `""`).
 
 `addTags` and `removeTags` add or remove individual tags without replacing the full set. They are idempotent: adding a tag that already exists or removing a tag that does not exist is a no-op. When more than one tag field is present in a single request, apply in order: `tags` replacement, then `removeTags`, then `addTags`.
 
@@ -166,7 +166,7 @@ type SubscriptionEditRequest struct {
   ID string `json:"id" validate:"required"`
 
   // Subscription metadata
-  Name       *string    `json:"name,omitempty"`
+  Name       *string    `json:"name,omitempty" validate:"omitempty,min=1"`
   Group      *string    `json:"group,omitempty"`
   Tags       *[]string  `json:"tags,omitempty"`       // replaces all tags; [] removes all tags
   AddTags    *[]string  `json:"addTags,omitempty"`
@@ -248,7 +248,7 @@ type BillingPeriodAddResponse struct{}
 
 #### billingPeriod.edit
 
-Edit a billing period. Omitted (nil) fields are left unchanged. The edited billing period must not overlap any other billing period of the subscription.
+Edit a billing period. Omitted (nil) fields are left unchanged. Only `endOn` may be cleared (set to null on the latest billing period); other stored columns are NOT NULL and must not be cleared. The edited billing period must not overlap any other billing period of the subscription.
 
 When `costAuto` is true, the service sets `cost` via `currency.convert` using `billingCurrency`, `billingCost`, and `exchangeOn` equal to the minimum of the effective `startOn` of the period (after applying coalesced request fields) and the current date. The request must not include `cost` when `costAuto` is true. `costAuto` requires `billingCost` in the request.
 
@@ -709,18 +709,18 @@ type DateRangeFilter struct {
 // validate:"int_range" on IntegerRangeFilter
 type IntegerRangeFilter struct {
   Gte int `json:"gte,omitempty"`
-  Lt  int `json:"lt,omitempty"`
+  Lte int `json:"lte,omitempty"`
 }
 
 // validate:"decimal_range" on DecimalRangeFilter
 type DecimalRangeFilter struct {
   Gte string `json:"gte,omitempty" validate:"omitempty,decimal"`
-  Lt  string `json:"lt,omitempty"  validate:"omitempty,decimal"`
+  Lte string `json:"lte,omitempty" validate:"omitempty,decimal"`
 }
 
 type StringFilter struct {
   Value    string `json:"value,omitempty"`
-  Operator string `json:"operator,omitempty" validate:"omitempty,oneof=contains exact"` // default contains when omitted
+  Operator string `json:"operator,omitempty" validate:"omitempty,oneof=contains equals"` // default equals before validate
 }
 
 type ArrayFilter struct {
@@ -777,5 +777,6 @@ type ReminderFilters struct {
 - By design, `subscription.start` and `subscription.cancel` can't take an explicit end date. They accept a `duration` instead: an integer number of months, a multiple of the billing frequency, starting from zero. The end date is derived from it:
   - `subscription.start`: counted from `startOn`. A duration of 0 starts an ongoing billing period (no end date).
   - `subscription.cancel`: counted from the next charge date. A duration of 0 ends the subscription on the next charge date, i.e. at the end of the period already paid for.
+- `StringFilter.Operator` defaults to `equals` when omitted (apply before `validator.Struct`).
 - `PaymentFilters.PaymentDate` is required. If it is not provided, it is equivalent to `[null, current_date)`, i.e. all payments before the current date. If only `gte` is provided, `lt` defaults to the current date.
 - Reports on "specific subscriptions" can only be retrieved if the set of subscriptions can be selected with the currently defined filters (name, group, tags, status). Arbitrary sets of subscriptions that share no group or tag can't be reported on in a single request.
