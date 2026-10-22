@@ -100,7 +100,7 @@ These recalculations, truncations and repopulations run atomically in a single t
 Exchange rates are fetched from online sources.
 
 As `subtill` evolves, the data model may be extended to support more features. This introduces a need to version the database schema. The database schema is versioned using the `golang-migrate/migrate` package.
-- Migrations are embedded in the program and are run automatically when a database is opened and the schema is outdated.
+- Migrations are embedded in the program and are optionally run automatically when a database is opened and the schema is outdated.
 - If the database schema has a version greater than the current version, the program will refuse to open the database
 
 ## Core Features

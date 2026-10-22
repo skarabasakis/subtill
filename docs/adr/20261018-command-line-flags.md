@@ -12,7 +12,8 @@ The database is a SQLite database file. It should already exist on disk and it s
 
 - --db-create: Create a new database if it does not exist (error if database already exists)
 - --db-migrate: Migrate the database from an earlier schema version to the current schema version
-- --db-rollback: Rollback the database from a later schema version to the current schema version
+
+A database with a later schema version than the current one is always refused.
 
 ## Mode Specific Flags
 
