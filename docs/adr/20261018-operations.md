@@ -552,6 +552,7 @@ type SubscriptionRecord struct {
 
 type BillingPeriodRecord struct {
   ID                    string    `json:"id"`
+  SubscriptionID        string    `json:"subscriptionId"`
   StartOn               time.Date `json:"startOn"`
   EndOn                 time.Date `json:"endOn"`
   Frequency             int       `json:"frequency"`
@@ -579,6 +580,7 @@ type ReminderRecord struct {
   Action         ReminderAction `json:"action"`
   CustomNote     string         `json:"customNote"`
   TriggerOn      time.Date      `json:"triggerOn"`
+  IsTriggered    bool           `json:"isTriggered"`
 }
 
 type CurrencyConversionMode string
