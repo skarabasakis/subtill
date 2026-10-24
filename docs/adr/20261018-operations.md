@@ -601,8 +601,8 @@ type PreferencesRecord struct {
 
 type SubscriptionStatus string
 const (
-  SubscriptionStatusOngoing SubscriptionStatus = "ongoing"
-  SubscriptionStatusEnded   SubscriptionStatus = "ended"
+  SubscriptionStatusActive   SubscriptionStatus = "active"
+  SubscriptionStatusInactive SubscriptionStatus = "inactive"
 )
 
 type Subscription struct {
@@ -730,22 +730,29 @@ type ArrayFilter struct {
   Operator string   `json:"operator,omitempty" validate:"omitempty,oneof=all any"` // default any when omitted
 }
 
+// Subset of SubscriptionFilters that SubscriptionRepository may apply in SQL.
+// Zero value means no extra predicates. See repositories ADR for SQL mapping.
+type SubscriptionFiltersDb struct {
+  Name            StringFilter       `json:"name"            validate:"dive"`
+  Group           string             `json:"group"`
+  Tags            ArrayFilter        `json:"tags"            validate:"dive"`
+  Status          SubscriptionStatus `json:"status"          validate:"omitempty,oneof=active inactive"`
+  BillingCurrency string             `json:"billingCurrency" validate:"omitempty,currency"`
+  Frequency       int                `json:"frequency"       validate:"omitempty,gt=0"`
+}
+
 type SubscriptionFilters struct {
-  Name            StringFilter              `json:"name"            validate:"dive"`
-  Group           string                    `json:"group"`
-  Tags            ArrayFilter               `json:"tags"            validate:"dive"`
-  Status          SubscriptionStatus        `json:"status"          validate:"omitempty,oneof=active inactive"`
+  SubscriptionFiltersDb
+
   BillingStatus   SubscriptionBillingStatus `json:"billingStatus"   validate:"omitempty,oneof=ongoing cancelScheduled canceled"`
   StartOn         DateRangeFilter           `json:"startOn"         validate:"dive"`
-  RestartOn       DateRangeFilter           `json:"restartOn"       validate:"dive"`
   EndOn           DateRangeFilter           `json:"endOn"           validate:"dive"`
+  RestartOn       DateRangeFilter           `json:"restartOn"       validate:"dive"`
   StartInterval   IntegerRangeFilter        `json:"startInterval"   validate:"dive"`
   RestartInterval IntegerRangeFilter        `json:"restartInterval" validate:"dive"`
   EndInterval     IntegerRangeFilter        `json:"endInterval"     validate:"dive"`
-  BillingCurrency string                    `json:"billingCurrency" validate:"omitempty,currency"`
   BillingCost     DecimalRangeFilter        `json:"billingCost"     validate:"dive"`
   Cost            DecimalRangeFilter        `json:"cost"            validate:"dive"`
-  Frequency       int                       `json:"frequency"       validate:"omitempty,gt=0"`
 
   // Filters on derived fields
   Duration         IntegerRangeFilter `json:"duration"         validate:"dive"`
