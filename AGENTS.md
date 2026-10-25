@@ -34,7 +34,7 @@ Use **`wails3 task <name>`** from the repo root ([`Taskfile.yml`](Taskfile.yml))
 
 ## Frontend
 
-- shadcn in `frontend/src/components/ui/`; app primitives in `frontend/src/components/primitives/`.
+- shadcn owned components in `frontend/src/components/ui/`; app-specific tailwind-based shared components in `frontend/src/components/shared/`.
 - TanStack Query default `queryFn` → Wails bindings (`frontend/src/lib/query/default-query-fn.ts`).
 - Regenerate bindings after Wails service changes; do not hand-edit `frontend/bindings/`.
 
