@@ -1,0 +1,2 @@
+# Figma design binaries — collapse diffs on GitHub PRs by default.
+*.fig -diff linguist-generated
