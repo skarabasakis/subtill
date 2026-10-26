@@ -83,7 +83,7 @@ Return a list of subscriptions that match filter criteria
 ```go
 type SubscriptionListRequest struct {
   Filter SubscriptionFilters `json:"filter" validate:"dive"`
-  Sort   SubscriptionSort    `json:"sort"   validate:"dive"`
+  Sort   []SubscriptionSort    `json:"sort"   validate:"dive"`
 }
 
 type SubscriptionListResponse struct {
@@ -235,7 +235,7 @@ When `costAuto` is true, the service sets `cost` via `currency.convert` using `b
 type BillingPeriodAddRequest struct {
   SubscriptionID  string    `json:"subscriptionId"  validate:"required"`
   StartOn         time.Date `json:"startOn"         validate:"required"`
-  EndOn           time.Date `json:"endOn"          validate:"required,gtfield=StartOn"`
+  EndOn           time.Date `json:"endOn"           validate:"required,gtfield=StartOn"`
   Frequency       int       `json:"frequency"       validate:"required,gt=0"`
   BillingCurrency string    `json:"billingCurrency" validate:"omitempty,currency,required_with=BillingCost"`
   BillingCost     string    `json:"billingCost"     validate:"omitempty,decimal,required_with=BillingCurrency"`
@@ -316,7 +316,7 @@ Return reminders that match filter criteria
 ```go
 type ReminderListRequest struct {
   Filter ReminderFilters `json:"filter" validate:"dive"`
-  Sort   ReminderSort    `json:"sort"   validate:"dive"`
+  Sort   []ReminderSort  `json:"sort"   validate:"dive"`
 }
 
 type ReminderListResponse struct {
@@ -601,41 +601,76 @@ type PreferencesRecord struct {
 
 type SubscriptionStatus string
 const (
-  SubscriptionStatusActive   SubscriptionStatus = "active"
-  SubscriptionStatusInactive SubscriptionStatus = "inactive"
+  SubscriptionStatusEnded     SubscriptionStatus = "ended"
+  SubscriptionStatusOngoing   SubscriptionStatus = "ongoing"
+  SubscriptionStatusScheduled SubscriptionStatus = "scheduled"
 )
 
 type Subscription struct {
   SubscriptionRecord
 
   // Derived fields
-  Status                        SubscriptionStatus        `json:"status"`
-  ScheduledEnd                  boolean `json:"scheduledEnd"`
-  StartOn                       time.Date                 `json:"startOn"`
-  RestartOn                     time.Date                 `json:"restartOn"` // start of erliest billing period that is consecutive to the latest active billing period
-  EndOn                         time.Date                 `json:"endOn"`
-  Duration                      int                       `json:"duration"`
-  LifetimeDuration              int                       `json:"lifetimeDuration"`
-  Frequency                     int                       `json:"frequency"`
-  BillingCurrency               string                    `json:"billingCurrency"`
-  BillingCost                   string                    `json:"billingCost"`
-  Cost                          string                    `json:"cost"`
-  MonthlyCost                   string                    `json:"monthlyCost"`
-  YearlyCost                    string                    `json:"yearlyCost"`
-  LifetimeCost                  string                    `json:"totalCost"`
-  LifetimeCostInDefaultCurrency string                    `json:"totalCostInDefaultCurrency"`
+  Status                       SubscriptionStatus `json:"status"`
+  OpenEnded                    bool               `json:"openEnded"`
+  StartOn                      time.Date          `json:"startOn"`
+  EndOn                        time.Date          `json:"endOn"`
+  Span                         int                `json:"span"`
+  Duration                     int                `json:"duration"`
+  Cost                         string             `json:"cost"`
+  Frequency                    int                `json:"frequency"`
+  MonthlyCost                  string             `json:"monthlyCost"`
+  YearlyCost                   string             `json:"yearlyCost"`
+  SpanCost                     string             `json:"spanCost"`
+  DurationCost                 string             `json:"durationCost"`
+  RemainingCost                string             `json:"remainingCost"`
+  LifetimeStartOn              time.Date          `json:"lifetimeStartOn"`
+  LifetimeEndOn                time.Date          `json:"lifetimeEndOn"`
+  LifetimeSpan                 int                `json:"lifetimeSpan"`
+  LifetimeDuration             int                `json:"lifetimeDuration"`
+  LifetimeSpanCost             string             `json:"lifetimeSpanCost"`
+  LifetimeDurationCost         string             `json:"lifetimeDurationCost"`
+  LifetimeRemainingCost        string             `json:"lifetimeRemainingCost"`
+  BillingCurrency              string             `json:"billingCurrency"`
+  BillingCost                  string             `json:"billingCost"`
+  MonthlyBillingCost           string             `json:"monthlyBillingCost"`
+  YearlyBillingCost            string             `json:"yearlyBillingCost"`
+  SpanBillingCost              string             `json:"spanBillingCost"`
+  DurationBillingCost          string             `json:"durationBillingCost"`
+  RemainingBillingCost         string             `json:"remainingBillingCost"`
+  LifetimeBillingCurrency      *string            `json:"lifetimeBillingCurrency"`
+  LifetimeSpanBillingCost      *string            `json:"lifetimeSpanBillingCost"`
+  LifetimeDurationBillingCost  *string            `json:"lifetimeDurationBillingCost"`
+  LifetimeRemainingBillingCost *string            `json:"lifetimeRemainingBillingCost"`
 
   // Associated records
-  BillingPeriods []BillingPeriod `json:"billingPeriods"`
   Reminders      []Reminder      `json:"reminders"`
+  BillingPeriods []BillingPeriod `json:"billingPeriods"`
+
+  // Derived associations
+  ConsecutiveBillingPeriods []BillingPeriod `json:"consecutiveBillingPeriods"`
+  ClosestConsecutiveBillingPeriod BillingPeriod `json:"closestConsecutiveBillingPeriod"`
 }
 
 type BillingPeriod struct {
   BillingPeriodRecord
 
-  Status          SubscriptionStatus `json:"status"`
-  ScheduledEnd    boolean            `json:"scheduledEnd"`
-  Duration        int                `json:"duration"`
+  Status               SubscriptionStatus `json:"status"`
+  OpenEnded            bool               `json:"openEnded"`
+  SpanPaymentCount     int                `json:"spanPaymentCount"`
+  DurationPaymentCount int                `json:"durationPaymentCount"`
+  Span                 int                `json:"span"`
+  Duration             int                `json:"duration"`
+  NextChargeCost       string             `json:"nextChargeCost"`
+  MonthlyCost          string             `json:"monthlyCost"`
+  YearlyCost           string             `json:"yearlyCost"`
+  SpanCost             string             `json:"spanCost"`
+  DurationCost         string             `json:"durationCost"`
+  RemainingCost        string             `json:"remainingCost"`
+  MonthlyBillingCost   string             `json:"monthlyBillingCost"`
+  YearlyBillingCost    string             `json:"yearlyBillingCost"`
+  SpanBillingCost      string             `json:"spanBillingCost"`
+  DurationBillingCost  string             `json:"durationBillingCost"`
+  RemainingBillingCost string             `json:"remainingBillingCost"`
 }
 
 type Reminder struct {
@@ -665,7 +700,7 @@ const (
 )
 
 type SubscriptionSort struct {
-  Field     SubscriptionSortFields `json:"field,omitempty" validate:"omitempty,oneof=id name startOn restartOn endOn duration lifetimeDuration monthlyCost yearlyCost lifetimeCost"`
+  Field     SubscriptionSortFields `json:"field,omitempty" validate:"omitempty,oneof=id name openEnded startOn endOn span duration cost frequency monthlyCost yearlyCost spanCost durationCost remainingCost lifetimeStartOn lifetimeEndOn lifetimeSpan lifetimeDuration lifetimeSpanCost lifetimeDurationCost lifetimeRemainingCost billingCurrency billingCost monthlyBillingCost yearlyBillingCost spanBillingCost durationBillingCost remainingBillingCost lifetimeBillingCurrency lifetimeSpanBillingCost lifetimeDurationBillingCost lifetimeRemainingBillingCost"`
   Direction SortDirection          `json:"dir,omitempty"   validate:"omitempty,oneof=asc desc"`
 }
 
@@ -680,16 +715,39 @@ type ReminderSort struct {
 ```go
 type SubscriptionSortFields string
 const (
-  SubscriptionSortFieldID               SubscriptionSortFields = "id"
-  SubscriptionSortFieldName             SubscriptionSortFields = "name"
-  SubscriptionSortFieldStartOn          SubscriptionSortFields = "startOn"
-  SubscriptionSortFieldRestartOn        SubscriptionSortFields = "restartOn"
-  SubscriptionSortFieldEndOn            SubscriptionSortFields = "endOn"
-  SubscriptionSortFieldDuration         SubscriptionSortFields = "duration"
-  SubscriptionSortFieldLifetimeDuration SubscriptionSortFields = "lifetimeDuration"
-  SubscriptionSortFieldMonthlyCost      SubscriptionSortFields = "monthlyCost"
-  SubscriptionSortFieldYearlyCost       SubscriptionSortFields = "yearlyCost"
-  SubscriptionSortFieldLifetimeCost     SubscriptionSortFields = "lifetimeCost"
+  SubscriptionSortFieldID                           SubscriptionSortFields = "id"
+  SubscriptionSortFieldName                         SubscriptionSortFields = "name"
+  SubscriptionSortFieldGroup                        SubscriptionSortFields = "group"
+  SubscriptionSortFieldOpenEnded                    SubscriptionSortFields = "openEnded"
+  SubscriptionSortFieldStartOn                      SubscriptionSortFields = "startOn"
+  SubscriptionSortFieldEndOn                        SubscriptionSortFields = "endOn"
+  SubscriptionSortFieldSpan                         SubscriptionSortFields = "span"
+  SubscriptionSortFieldDuration                     SubscriptionSortFields = "duration"
+  SubscriptionSortFieldCost                         SubscriptionSortFields = "cost"
+  SubscriptionSortFieldFrequency                    SubscriptionSortFields = "frequency"
+  SubscriptionSortFieldMonthlyCost                  SubscriptionSortFields = "monthlyCost"
+  SubscriptionSortFieldYearlyCost                   SubscriptionSortFields = "yearlyCost"
+  SubscriptionSortFieldSpanCost                     SubscriptionSortFields = "spanCost"
+  SubscriptionSortFieldDurationCost                 SubscriptionSortFields = "durationCost"
+  SubscriptionSortFieldRemainingCost                SubscriptionSortFields = "remainingCost"
+  SubscriptionSortFieldLifetimeStartOn              SubscriptionSortFields = "lifetimeStartOn"
+  SubscriptionSortFieldLifetimeEndOn                SubscriptionSortFields = "lifetimeEndOn"
+  SubscriptionSortFieldLifetimeSpan                 SubscriptionSortFields = "lifetimeSpan"
+  SubscriptionSortFieldLifetimeDuration             SubscriptionSortFields = "lifetimeDuration"
+  SubscriptionSortFieldLifetimeSpanCost             SubscriptionSortFields = "lifetimeSpanCost"
+  SubscriptionSortFieldLifetimeDurationCost         SubscriptionSortFields = "lifetimeDurationCost"
+  SubscriptionSortFieldLifetimeRemainingCost        SubscriptionSortFields = "lifetimeRemainingCost"
+  SubscriptionSortFieldBillingCurrency              SubscriptionSortFields = "billingCurrency"
+  SubscriptionSortFieldBillingCost                  SubscriptionSortFields = "billingCost"
+  SubscriptionSortFieldMonthlyBillingCost           SubscriptionSortFields = "monthlyBillingCost"
+  SubscriptionSortFieldYearlyBillingCost            SubscriptionSortFields = "yearlyBillingCost"
+  SubscriptionSortFieldSpanBillingCost              SubscriptionSortFields = "spanBillingCost"
+  SubscriptionSortFieldDurationBillingCost          SubscriptionSortFields = "durationBillingCost"
+  SubscriptionSortFieldRemainingBillingCost         SubscriptionSortFields = "remainingBillingCost"
+  SubscriptionSortFieldLifetimeBillingCurrency      SubscriptionSortFields = "lifetimeBillingCurrency"
+  SubscriptionSortFieldLifetimeSpanBillingCost      SubscriptionSortFields = "lifetimeSpanBillingCost"
+  SubscriptionSortFieldLifetimeDurationBillingCost  SubscriptionSortFields = "lifetimeDurationBillingCost"
+  SubscriptionSortFieldLifetimeRemainingBillingCost SubscriptionSortFields = "lifetimeRemainingBillingCost"
 )
 
 type ReminderSortFields string
@@ -736,38 +794,49 @@ type SubscriptionFiltersDb struct {
   Name            StringFilter       `json:"name"            validate:"dive"`
   Group           string             `json:"group"`
   Tags            ArrayFilter        `json:"tags"            validate:"dive"`
-  Status          SubscriptionStatus `json:"status"          validate:"omitempty,oneof=active inactive"`
-  BillingCurrency string             `json:"billingCurrency" validate:"omitempty,currency"`
-  Frequency       int                `json:"frequency"       validate:"omitempty,gt=0"`
+  Status          SubscriptionStatus `json:"status"          validate:"omitempty,oneof=ended ongoing scheduled"`
 }
 
 type SubscriptionFilters struct {
   SubscriptionFiltersDb
 
-  BillingStatus   SubscriptionBillingStatus `json:"billingStatus"   validate:"omitempty,oneof=ongoing cancelScheduled canceled"`
-  StartOn         DateRangeFilter           `json:"startOn"         validate:"dive"`
-  EndOn           DateRangeFilter           `json:"endOn"           validate:"dive"`
-  RestartOn       DateRangeFilter           `json:"restartOn"       validate:"dive"`
-  StartInterval   IntegerRangeFilter        `json:"startInterval"   validate:"dive"`
-  RestartInterval IntegerRangeFilter        `json:"restartInterval" validate:"dive"`
-  EndInterval     IntegerRangeFilter        `json:"endInterval"     validate:"dive"`
-  BillingCost     DecimalRangeFilter        `json:"billingCost"     validate:"dive"`
-  Cost            DecimalRangeFilter        `json:"cost"            validate:"dive"`
-
-  // Filters on derived fields
-  Duration         IntegerRangeFilter `json:"duration"         validate:"dive"`
-  LifetimeDuration IntegerRangeFilter `json:"lifetimeDuration" validate:"dive"`
-
-  MonthlyCost  DecimalRangeFilter `json:"monthlyCost"  validate:"dive"`
-  YearlyCost   DecimalRangeFilter `json:"yearlyCost"   validate:"dive"`
-  LifetimeCost DecimalRangeFilter `json:"lifetimeCost" validate:"dive"`
+  OpenEnded                    bool               `json:"openEnded"`
+  StartOn                      DateRangeFilter    `json:"startOn"                      validate:"dive"`
+  EndOn                        DateRangeFilter    `json:"endOn"                        validate:"dive"`
+  Span                         IntegerRangeFilter `json:"span"                         validate:"dive"`
+  Duration                     IntegerRangeFilter `json:"duration"                     validate:"dive"`
+  Cost                         DecimalRangeFilter `json:"cost"                         validate:"dive"`
+  Frequency                    int                `json:"frequency"                    validate:"omitempty,gt=0"`
+  MonthlyCost                  DecimalRangeFilter `json:"monthlyCost"                  validate:"dive"`
+  YearlyCost                   DecimalRangeFilter `json:"yearlyCost"                   validate:"dive"`
+  SpanCost                     DecimalRangeFilter `json:"spanCost"                     validate:"dive"`
+  DurationCost                 DecimalRangeFilter `json:"durationCost"                 validate:"dive"`
+  RemainingCost                DecimalRangeFilter `json:"remainingCost"                validate:"dive"`
+  LifetimeStartOn              DateRangeFilter    `json:"lifetimeStartOn"              validate:"dive"`
+  LifetimeEndOn                DateRangeFilter    `json:"lifetimeEndOn"                validate:"dive"`
+  LifetimeSpan                 IntegerRangeFilter `json:"lifetimeSpan"                 validate:"dive"`
+  LifetimeDuration             IntegerRangeFilter `json:"lifetimeDuration"             validate:"dive"`
+  LifetimeSpanCost             DecimalRangeFilter `json:"lifetimeSpanCost"             validate:"dive"`
+  LifetimeDurationCost         DecimalRangeFilter `json:"lifetimeDurationCost"         validate:"dive"`
+  LifetimeRemainingCost        DecimalRangeFilter `json:"lifetimeRemainingCost"        validate:"dive"`
+  BillingCurrency              string             `json:"billingCurrency"              validate:"omitempty,currency"`
+  BillingCost                  DecimalRangeFilter `json:"billingCost"                  validate:"dive"`
+  MonthlyBillingCost           DecimalRangeFilter `json:"monthlyBillingCost"           validate:"dive"`
+  YearlyBillingCost            DecimalRangeFilter `json:"yearlyBillingCost"            validate:"dive"`
+  SpanBillingCost              DecimalRangeFilter `json:"spanBillingCost"              validate:"dive"`
+  DurationBillingCost          DecimalRangeFilter `json:"durationBillingCost"          validate:"dive"`
+  RemainingBillingCost         DecimalRangeFilter `json:"remainingBillingCost"         validate:"dive"`
+  LifetimeBillingCurrency      string             `json:"lifetimeBillingCurrency"      validate:"omitempty,currency"`
+  LifetimeSpanBillingCost      DecimalRangeFilter `json:"lifetimeSpanBillingCost"      validate:"dive"`
+  LifetimeDurationBillingCost  DecimalRangeFilter `json:"lifetimeDurationBillingCost"  validate:"dive"`
+  LifetimeRemainingBillingCost DecimalRangeFilter `json:"lifetimeRemainingBillingCost" validate:"dive"`
 }
 
 type PaymentFilters struct {
   Name        StringFilter       `json:"name"        validate:"dive"`
   Group       string             `json:"group"`
   Tags        ArrayFilter        `json:"tags"        validate:"dive"`
-  Status      SubscriptionStatus `json:"status"      validate:"omitempty,oneof=active inactive"`
+  Status      SubscriptionStatus `json:"status"      validate:"omitempty,oneof=ended ongoing scheduled"`
   PaymentDate DateRangeFilter    `json:"paymentDate" validate:"dive"` // defaults applied before validate; see Notes
 }
 

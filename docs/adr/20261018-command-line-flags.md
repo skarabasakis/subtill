@@ -98,7 +98,7 @@ Calendar dates use `YYYY-MM-DD`. Decimal amounts are passed as strings (same val
 
 ### Conventions
 
-- **List and aggregate reads** (`list`, `payments`, `total`, `reminders`) build the operation’s `filter` and `sort` objects from list filter flags and `--sort-*` (see [list filter flags](#list-filter-flags) below). Cmd flags are **per subcommand** (for example `--name` on `list` sets `filter.name`; on `get` it selects lookup-by-name).
+- **List and aggregate reads** (`list`, `payments`, `total`, `reminders`) build the operation’s `filter` and `sort` objects from list filter flags and `--sort` / `--sort-asc` / `--sort-desc` (see [list filter flags](#list-filter-flags) below). Cmd flags are **per subcommand** (for example `--name` on `list` sets `filter.name`; on `get` it selects lookup-by-name).
 - **Patch-style writes** (`edit`, `billing-period-edit`, `set`) only send fields for flags that appear on the command line. Omitted flags are omitted from the request (unchanged in the service). Use `--clear-<field>` only for **nullable** string columns in [db-schema](./20261018-db-schema.md) (`group`, `notes`, `icon`, `url` on `edit`). Also use `--clear-tags` (remove all tags) and `--clear-end-on` on `billing-period-edit` where the operation allows null/empty semantics. On `edit`, when tag flags are combined, apply in order: `--tag` / `--clear-tags` (full replace), then `--remove-tag`, then `--add-tag`.
 - **Boolean fields:** For flags that default to **false**, document only `--<name>` (opt-in). Omitting the flag is false; do not document `--no-<name>`. For flags that default to **true**, or patch commands where the CLI must send **false** explicitly, document `--no-<name>` (and `--<name>` when needed). On patch writes, omitting a boolean flag leaves the request field unset (unchanged); passing `--<name>` sets true in the request.
 - **Auto flags** (`--icon-auto`, `--cost-auto`) are mutually exclusive with their manual counterparts (`--icon` / `--clear-icon`, `--cost`). `--cost-auto` requires `--billing-cost`.
@@ -117,17 +117,17 @@ Nested filter shapes match [Operations](./20261018-operations.md) (`Subscription
 - `--tag` — repeat for each tag (`values`)
 - `--tags-operator` — `all` or `any` (default `any` when omitted)
 
-**`DateRangeFilter`** (`startOn`, `restartOn`, `endOn`, `paymentDate`, `triggerOn`):
+**`DateRangeFilter`** (`startOn`, `endOn`, `lifetimeStartOn`, `lifetimeEndOn`, `paymentDate`, `triggerOn`):
 
 - `--<field>-gte` — inclusive lower bound (kebab-case field, e.g. `--start-on-gte`, `--payment-date-gte`)
 - `--<field>-lt` — exclusive upper bound (e.g. `--payment-date-lt`)
 
-**`IntegerRangeFilter`** (`startInterval`, `restartInterval`, `endInterval`, `duration`, `lifetimeDuration`):
+**`IntegerRangeFilter`** (`span`, `duration`, `lifetimeSpan`, `lifetimeDuration`):
 
 - `--<field>-gte`
 - `--<field>-lte`
 
-**`DecimalRangeFilter`** (`billingCost`, `cost`, `monthlyCost`, `yearlyCost`, `lifetimeCost`):
+**`DecimalRangeFilter`** (`cost`, `monthlyCost`, `yearlyCost`, `spanCost`, `durationCost`, `remainingCost`, `lifetimeSpanCost`, `lifetimeDurationCost`, `lifetimeRemainingCost`, `billingCost`, `monthlyBillingCost`, `yearlyBillingCost`, `spanBillingCost`, `durationBillingCost`, `remainingBillingCost`, `lifetimeSpanBillingCost`, `lifetimeDurationBillingCost`, `lifetimeRemainingBillingCost`):
 
 - `--<field>-gte`
 - `--<field>-lte`
@@ -135,15 +135,16 @@ Nested filter shapes match [Operations](./20261018-operations.md) (`Subscription
 **Subscription-only scalar filters** (`list`):
 
 - `--group`
-- `--status` — `active` or `inactive`
-- `--billing-status` — `ongoing`, `cancelScheduled`, or `canceled`
+- `--status` — `ended`, `ongoing`, or `scheduled`
+- `--open-ended` — bool; omitting the flag is false
 - `--billing-currency`
+- `--lifetime-billing-currency`
 - `--frequency` — positive integer
 
 **Payment-only scalar filters** (`payments`, `total`):
 
 - `--group`
-- `--status` — `active` or `inactive`
+- `--status` — `ended`, `ongoing`, or `scheduled`
 
 `paymentDate` on payments uses `--payment-date-gte` / `--payment-date-lt`. When both are omitted, the service applies the defaults documented in Operations before validation.
 
@@ -153,8 +154,15 @@ Nested filter shapes match [Operations](./20261018-operations.md) (`Subscription
 
 **Sort** (`list`, `reminders`):
 
-- `--sort-field` — subscription: `id`, `name`, `startOn`, `restartOn`, `endOn`, `duration`, `lifetimeDuration`, `monthlyCost`, `yearlyCost`, `lifetimeCost`; reminder: `name`, `triggerOn`
-- `--sort-dir` — `asc` or `desc`
+Each flag is one complete key. The argument is the field name, and the flag name is the direction. Repeat them in key order; appearance order is the order of the `sort` array.
+
+- `--sort-asc <field>` — `direction` `asc`
+- `--sort-desc <field>` — `direction` `desc`
+- `--sort <field>` — alias of `--sort-asc`
+
+On `list`, field values are `id`, `name`, `openEnded`, `startOn`, `endOn`, `span`, `duration`, `cost`, `frequency`, `monthlyCost`, `yearlyCost`, `spanCost`, `durationCost`, `remainingCost`, `lifetimeStartOn`, `lifetimeEndOn`, `lifetimeSpan`, `lifetimeDuration`, `lifetimeSpanCost`, `lifetimeDurationCost`, `lifetimeRemainingCost`, `billingCurrency`, `billingCost`, `monthlyBillingCost`, `yearlyBillingCost`, `spanBillingCost`, `durationBillingCost`, `remainingBillingCost`, `lifetimeBillingCurrency`, `lifetimeSpanBillingCost`, `lifetimeDurationBillingCost`, `lifetimeRemainingBillingCost`.
+
+On `reminders`, field values are `name` and `triggerOn`.
 
 ### `list` (`subscription.list`)
 

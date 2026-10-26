@@ -9,12 +9,16 @@ REST mapping for operations in [Operations](./20261018-operations.md). JSON rout
   - Fields carried in the path (`id`, `subscriptionId`) are omitted from the body.
   - `subscription.get`, `subscription.delete`, `subscription.cancel`, `subscription.resume`, `billingPeriod.delete`, `reminder.clear`, and `reminder.snooze` omit the path `id` from the body; remaining fields stay in the body.
   - `preferences.get` has no body.
-- **List and aggregate reads** (`subscription.list`, `payment.list`, `payment.total`, `reminder.list`) use `GET`. Nested `filter` and `sort` objects are passed as URL-encoded JSON in query parameters `filter` and `sort` (when applicable), using the same shapes as the operation request structs.
+- **List and aggregate reads** (`subscription.list`, `payment.list`, `payment.total`, `reminder.list`) use `GET`. `filter` and `sort` are bracket query parameters with the same shape as those fields on the operation request.
+  - A scalar is `filter[status]=ongoing`.
+  - A nested object adds a bracket level: `filter[name][value]=netflix&filter[name][operator]=contains`, `filter[startOn][gte]=2026-01-01&filter[startOn][lt]=2026-06-01`.
+  - A slice uses a numeric index: `filter[tags][values][0]=work&filter[tags][values][1]=personal`.
+  - `sort` is set only when the request struct has `sort` (`subscription.list`, `reminder.list`). Each element is one key, and the index is the key order: `sort[0][field]=name&sort[0][dir]=asc&sort[1][field]=monthlyCost&sort[1][dir]=desc`. `dir` may be omitted.
 - **Lookup helpers** (`icon.fetch`, `currency.convert`) use `GET` with query parameters matching the operation request fields (after applying documented defaults in the handler before validation).
 
 ## subscriptions
 
-- `subscription.list`: `GET` `/subscriptions?filter[...]=...&sort[...]=...`
+- `subscription.list`: `GET` `/subscriptions?filter[...]=...&sort[0][field]=...&sort[0][dir]=...`
 - `subscription.getByName`: `GET` `/subscriptions/name/{name}`
 - `subscription.get`: `GET` `/subscriptions/{id}`
 - `subscription.start`: `POST` `/subscriptions`
@@ -31,12 +35,12 @@ REST mapping for operations in [Operations](./20261018-operations.md). JSON rout
 
 ## payments
 
-- `payment.list`: `GET` `/payments?filter[...]=...&sort[...]=...`
+- `payment.list`: `GET` `/payments?filter[...]=...`
 - `payment.total`: `GET` `/payments/total?filter[...]=...`
 
 ## reminders
 
-- `reminder.list`: `GET` `/reminders?filter[...]=...&sort[...]=...`
+- `reminder.list`: `GET` `/reminders?filter[...]=...&sort[0][field]=...&sort[0][dir]=...`
 - `reminder.add`: `POST` `/subscriptions/{subscriptionId}/reminders`
 - `reminder.snooze`: `POST` `/reminders/{id}/snooze`
 - `reminder.clear`: `DELETE` `/reminders/{id}`
