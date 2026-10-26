@@ -121,7 +121,7 @@ type DBInfo struct {
 func GetInfo(db *sqlx.DB) (info *DBInfo, err error)
 ```
 
-Returns the schema version, the number of rows in `subscriptions` and the preferences row. It is only valid on a handle returned by `Open`, which guarantees the schema is current; it does not support older schemas.
+Returns the schema version, `SubscriptionCount` from `SubscriptionRepository.Count` on the main pool (see [repositories](20261022-repositories.md)), and the preferences row. It is only valid on a handle returned by `Open`, which guarantees the schema is current; it does not support older schemas.
 
 ## Closing
 

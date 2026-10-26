@@ -791,10 +791,10 @@ type ArrayFilter struct {
 // Subset of SubscriptionFilters that SubscriptionRepository may apply in SQL.
 // Zero value means no extra predicates. See repositories ADR for SQL mapping.
 type SubscriptionFiltersDb struct {
-  Name            StringFilter       `json:"name"            validate:"dive"`
-  Group           string             `json:"group"`
-  Tags            ArrayFilter        `json:"tags"            validate:"dive"`
-  Status          SubscriptionStatus `json:"status"          validate:"omitempty,oneof=ended ongoing scheduled"`
+  Name   StringFilter         `json:"name"   validate:"dive"`
+  Group  string               `json:"group"`
+  Tags   ArrayFilter          `json:"tags"   validate:"dive"`
+  Status []SubscriptionStatus `json:"status" validate:"dive,omitempty"`
 }
 
 type SubscriptionFilters struct {
