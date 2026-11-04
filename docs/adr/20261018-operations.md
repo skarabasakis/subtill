@@ -13,7 +13,7 @@ This document provides a list of operations that can be performed on an existing
 - `subscription.list`: return a list of subscriptions that match filter criteria, along with their associated billing periods and reminders
 - `subscription.getByName`: return a subscription by name, along with its associated billing periods and reminders
 - `subscription.get`: return a subscription by ID, along with its associated billing periods and reminders
-- `subscription.start`: start or restart a subscription or change the price; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change)
+- `subscription.start`: start or restart a subscription or change the price; if it does not exist, create it; if it exists and is ended, start a new cycle; if it exists and is ongoing, end the current cycle and start a new one (e.g. price change) with the end date specified by the user
 - `subscription.cancel`: end a subscription (i.e. end the current cycle) and optionally cancel all associated "cancel" reminders
 - `subscription.resume`: restart a subscription (uncancel or extend the latest, still active but canceled, billing period)
 - `subscription.delete`: completely delete a subscription and all its associated cycles and reminders, as if it was never added
@@ -478,7 +478,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 
 - `subscription_not_found` — No subscription exists with the given `id`.
 - `subscription_inactive` — The subscription is not active (latest billing period has already ended).
-- `subscription_not_cancel_scheduled` — The latest billing period has no `ends_on` (already ongoing) or has already ended.
+- `subscription_not_cancelled` — The latest billing period has no `ends_on` (already ongoing) or has already ended.
 
 #### subscription.delete
 
@@ -554,7 +554,7 @@ type BillingPeriodRecord struct {
   ID                    string    `json:"id"`
   SubscriptionID        string    `json:"subscriptionId"`
   StartOn               time.Date `json:"startOn"`
-  EndOn                 time.Date `json:"endOn"`
+  EndOn                *time.Date `json:"endOn"`
   Frequency             int       `json:"frequency"`
   BillingCurrency       string    `json:"billingCurrency"`
   BillingCost           string    `json:"billingCost"`
@@ -613,18 +613,20 @@ type Subscription struct {
   Status                       SubscriptionStatus `json:"status"`
   OpenEnded                    bool               `json:"openEnded"`
   StartOn                      time.Date          `json:"startOn"`
-  EndOn                        time.Date          `json:"endOn"`
+  EndOn                        *time.Date         `json:"endOn"`
   Span                         int                `json:"span"`
   Duration                     int                `json:"duration"`
   Cost                         string             `json:"cost"`
   Frequency                    int                `json:"frequency"`
+  NextPaymentOn                *time.Date         `json:"nextPaymentOn"`
   MonthlyCost                  string             `json:"monthlyCost"`
   YearlyCost                   string             `json:"yearlyCost"`
   SpanCost                     string             `json:"spanCost"`
   DurationCost                 string             `json:"durationCost"`
   RemainingCost                string             `json:"remainingCost"`
   LifetimeStartOn              time.Date          `json:"lifetimeStartOn"`
-  LifetimeEndOn                time.Date          `json:"lifetimeEndOn"`
+  LifetimeEndOn                *time.Date         `json:"lifetimeEndOn"`
+  LifetimeNextPaymentOn        *time.Date         `json:"lifetimeNextPaymentOn"`
   LifetimeSpan                 int                `json:"lifetimeSpan"`
   LifetimeDuration             int                `json:"lifetimeDuration"`
   LifetimeSpanCost             string             `json:"lifetimeSpanCost"`
@@ -700,7 +702,7 @@ const (
 )
 
 type SubscriptionSort struct {
-  Field     SubscriptionSortFields `json:"field,omitempty" validate:"omitempty,oneof=id name openEnded startOn endOn span duration cost frequency monthlyCost yearlyCost spanCost durationCost remainingCost lifetimeStartOn lifetimeEndOn lifetimeSpan lifetimeDuration lifetimeSpanCost lifetimeDurationCost lifetimeRemainingCost billingCurrency billingCost monthlyBillingCost yearlyBillingCost spanBillingCost durationBillingCost remainingBillingCost lifetimeBillingCurrency lifetimeSpanBillingCost lifetimeDurationBillingCost lifetimeRemainingBillingCost"`
+  Field     SubscriptionSortFields `json:"field,omitempty" validate:"omitempty,oneof=id name openEnded startOn endOn span duration cost frequency monthlyCost yearlyCost spanCost durationCost remainingCost lifetimeStartOn lifetimeEndOn lifetimeNextPaymentOn lifetimeSpan lifetimeDuration lifetimeSpanCost lifetimeDurationCost lifetimeRemainingCost billingCurrency billingCost monthlyBillingCost yearlyBillingCost spanBillingCost durationBillingCost remainingBillingCost lifetimeBillingCurrency lifetimeSpanBillingCost lifetimeDurationBillingCost lifetimeRemainingBillingCost"`
   Direction SortDirection          `json:"dir,omitempty"   validate:"omitempty,oneof=asc desc"`
 }
 
@@ -725,6 +727,7 @@ const (
   SubscriptionSortFieldDuration                     SubscriptionSortFields = "duration"
   SubscriptionSortFieldCost                         SubscriptionSortFields = "cost"
   SubscriptionSortFieldFrequency                    SubscriptionSortFields = "frequency"
+- SubscriptionSortFieldNextPaymentOn                SubscriptionSortFields = "nextPaymentOn"
   SubscriptionSortFieldMonthlyCost                  SubscriptionSortFields = "monthlyCost"
   SubscriptionSortFieldYearlyCost                   SubscriptionSortFields = "yearlyCost"
   SubscriptionSortFieldSpanCost                     SubscriptionSortFields = "spanCost"
@@ -732,6 +735,7 @@ const (
   SubscriptionSortFieldRemainingCost                SubscriptionSortFields = "remainingCost"
   SubscriptionSortFieldLifetimeStartOn              SubscriptionSortFields = "lifetimeStartOn"
   SubscriptionSortFieldLifetimeEndOn                SubscriptionSortFields = "lifetimeEndOn"
+  SubscriptionSortFieldLifetimeNextPaymentOn        SubscriptionSortFields = "lifetimeNextPaymentOn"
   SubscriptionSortFieldLifetimeSpan                 SubscriptionSortFields = "lifetimeSpan"
   SubscriptionSortFieldLifetimeDuration             SubscriptionSortFields = "lifetimeDuration"
   SubscriptionSortFieldLifetimeSpanCost             SubscriptionSortFields = "lifetimeSpanCost"
