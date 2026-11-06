@@ -11,7 +11,7 @@ description: >-
 
 This skill defines the design-to-code contract for authoring and converting OpenPencil designs into themeable React + Tailwind CSS v4 + shadcn JSX.
 
-For generic OpenPencil CLI commands, MCP tool mechanics, `eval` scripting, and base Design JSX syntax, defer to the workspace [open-pencil](../open-pencil/SKILL.md) skill and its [design-authoring reference](../open-pencil/references/design-authoring.md). Do not duplicate generic tool workflows; apply the constraints below on top of them.
+For generic OpenPencil MCP tool mechanics, `eval` scripting, and base Design JSX syntax, defer to the workspace [open-pencil](../open-pencil/SKILL.md) skill and its [design-authoring reference](../open-pencil/references/design-authoring.md). Do not duplicate generic tool workflows; apply the constraints below on top of them.
 
 ## Core Invariants
 
@@ -109,7 +109,7 @@ Designs must be multi-mode themeable (`Light` and `Dark` modes in OpenPencil mat
 - Prefer multiples of `8` (`8, 16, 24, 32`) for section/layout gaps to satisfy `openpencil analyze spacing --grid 8`.
 
 ### Typography Scale
-- **Font family**: Always use `Geist` / `Geist Variable` (`font-sans` in `frontend/src/index.css`). Never use `Helvetica`, `Inter`, or `Arial`.
+- **Font family**: Always use `Helvetica Neue` (`font-sans` in `frontend/src/index.css`).
 - **Font sizes & line heights** (must map to unbracketed `text-*` utilities):
 
 | OpenPencil `size` (px) | Tailwind Class |
@@ -152,7 +152,8 @@ Run these checks via OpenPencil MCP before completing any design or conversion t
 
 - [ ] `describe` on the target root frame reports **zero issues** (no child using `fill` inside a non-auto-layout parent, no subpixel positions like `347.5`).
 - [ ] `lint` (and `lint_fix` if needed) confirms all coordinates are whole integers and all colors are bound to variables.
-- [ ] Every frame name follows the Naming Contract (`Page[: Mode]`, `Component[#id]`, or semantic HTML tag `div`/`section`/`h1`/`p`).
+- [ ] Top-level frames follow [Canvas position](#canvas-position): screens stacked vertically from `(0, 0)` with **48px** between them; modes of one screen in a row with **36px** between them; names are the screen name, or `Name of the Screen: Name of the mode` for every mode except the main one.
+- [ ] Every frame name follows the Naming Contract (`Screen[: Mode]`, `Component[#id]`, or semantic HTML tag `div`/`section`/`h1`/`p`).
 - [ ] Resulting React JSX contains **zero `[...]` bracket classes**, **zero inline `style` props**, and **zero `absolute` layout positioning**.
 
 ---
