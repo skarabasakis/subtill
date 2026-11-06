@@ -25,6 +25,11 @@ For generic OpenPencil CLI commands, MCP tool mechanics, `eval` scripting, and b
 
 ## 1. Top-Level Frame Dimensions & Viewport Convention
 
+Place top-level frames on the page canvas before applying the dimension rules below. Use whole-pixel `x` and `y` only.
+
+- **Different screens** stack vertically. Put the first screen at `x={0}` `y={0}`. Place each next screen **48px** below the previous one (`y` = previous `y` + previous height + `48`) and keep `x={0}`. Name the frame after the screen (`Launcher`, `Subscriptions`).
+- **Modes of the same screen** sit in one horizontal row. Keep the main screen as the leftmost frame. Place each other mode **36px** to the right of the previous frame (`x` = previous `x` + previous width + `36`) on the same `y`. Name every mode except the main one `Name of the Screen: Name of the mode` (for example `Launcher: With Database List` or `Subscriptions: Add Subscription Form`).
+
 All top-level frames must enable auto-layout (`flex="col"` or `flex="row"`—never `layoutMode: NONE`) and follow these dimension rules:
 
 | Top-Level Frame Dimensions | Meaning | React / Tailwind Root Mapping |
@@ -40,8 +45,8 @@ All top-level frames must enable auto-layout (`flex="col"` or `flex="row"`—nev
 Name every node in OpenPencil so its name deterministically dictates the emitted JSX element, component, and `id`:
 
 ### Top-Level Window Frames (`w={1024}`)
-- **Default page mode**: Name the frame after the page it implements in PascalCase (e.g., `Home`, `Subscriptions`, `Settings`).
-- **Alternative page mode/state**: Put the mode descriptor after a colon: `<PageName>: <Mode Descriptor>` (e.g., `Home: Blank Slate`, `Subscriptions: Empty`).
+- **Screen**: Name the frame after the screen in PascalCase (e.g., `Launcher`, `Subscriptions`, `Settings`). Canvas position for screens and their modes is defined in [Canvas position](#canvas-position).
+- **Screen mode**: Name every mode except the main one `Name of the Screen: Name of the mode` (e.g., `Launcher: With Database List`, `Subscriptions: Add Subscription Form`, `Home: Blank Slate`).
 
 ### Reusable React / shadcn Component Frames
 - Name the frame after the **PascalCase React component** it represents: `Button`, `Card`, `CardHeader`, `CardTitle`, `CardContent`, `Input`, `Badge`, `Dialog`, `Select`, etc.
