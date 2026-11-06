@@ -136,7 +136,7 @@ Nested filter shapes match [Operations](./20261018-operations.md) (`Subscription
 
 - `--group`
 - `--status` — `ended`, `ongoing`, or `scheduled`
-- `--open-ended` — bool; omitting the flag is false
+- `--subscription-term-status` — `openended` or `fixed`; omitting the flag applies no term filter
 - `--billing-currency`
 - `--lifetime-billing-currency`
 - `--frequency` — positive integer
@@ -160,7 +160,7 @@ Each flag is one complete key. The argument is the field name, and the flag name
 - `--sort-desc <field>` — `direction` `desc`
 - `--sort <field>` — alias of `--sort-asc`
 
-On `list`, field values are `id`, `name`, `openEnded`, `startOn`, `endOn`, `span`, `duration`, `cost`, `frequency`, `monthlyCost`, `yearlyCost`, `spanCost`, `durationCost`, `remainingCost`, `lifetimeStartOn`, `lifetimeEndOn`, `lifetimeSpan`, `lifetimeDuration`, `lifetimeSpanCost`, `lifetimeDurationCost`, `lifetimeRemainingCost`, `billingCurrency`, `billingCost`, `monthlyBillingCost`, `yearlyBillingCost`, `spanBillingCost`, `durationBillingCost`, `remainingBillingCost`, `lifetimeBillingCurrency`, `lifetimeSpanBillingCost`, `lifetimeDurationBillingCost`, `lifetimeRemainingBillingCost`.
+On `list`, field values are `id`, `name`, `subscriptionTermStatus`, `startOn`, `endOn`, `span`, `duration`, `cost`, `frequency`, `monthlyCost`, `yearlyCost`, `spanCost`, `durationCost`, `remainingCost`, `lifetimeStartOn`, `lifetimeEndOn`, `lifetimeSpan`, `lifetimeDuration`, `lifetimeSpanCost`, `lifetimeDurationCost`, `lifetimeRemainingCost`, `billingCurrency`, `billingCost`, `monthlyBillingCost`, `yearlyBillingCost`, `spanBillingCost`, `durationBillingCost`, `remainingBillingCost`, `lifetimeBillingCurrency`, `lifetimeSpanBillingCost`, `lifetimeDurationBillingCost`, `lifetimeRemainingBillingCost`.
 
 On `reminders`, field values are `name` and `triggerOn`.
 

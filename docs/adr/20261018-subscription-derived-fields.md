@@ -32,7 +32,9 @@ This document provides definitions for fields that are derived from other fields
   - ended: end_on is not null and end_on <= now
   - ongoing: (start_on <= now) and (end_on is null or end_on > now)
   - scheduled: start_on > now
-- OpenEnded: end_on is null
+- SubscriptionTermStatus:
+  - openended: end_on is null
+  - fixed: end_on is not null
 - SpanPaymentCount: PaymentCount(start_on, end_on, frequency).
 - DurationPaymentCount: PaymentCount(start_on, duration_end_on, frequency), where duration_end_on is end_on if end_on is not null and end_on <= now, otherwise nil.
 - Span: SpanPaymentCount × frequency.
@@ -71,7 +73,7 @@ The fields of a consecutive billing period are defined as follows:
 - StartOn: the start_on of the first billing period in the consecutive billing period
 - EndOn: the end_on of the last billing period in the consecutive billing period
 - Status: Derived from the StartOn and the EndOn of the consecutive billing period, using the same logic as the BillingPeriod status. Corollary: if there is at least one ongoing billing period in the consecutive billing period, the status of the consecutive billing period is ongoing
-- OpenEnded: Derived from the end_on of the consecutive billing period, using the same logic as the BillingPeriod OpenEnded.
+- SubscriptionTermStatus: Derived from the end_on of the consecutive billing period, using the same logic as the BillingPeriod SubscriptionTermStatus.
 - Span: Derived from the start_on and the end_on of the consecutive billing period, using the same logic as the BillingPeriod Span. Corollary: Assuming end_on is a charge date, the span is equal to the sum of the spans of the billing periods in the consecutive billing period.
 - Duration: Derived from the start_on and the end_on of the consecutive billing period, using the same logic as the BillingPeriod Duration. Corollary: Assuming end_on is a charge date, the duration is equal to the sum of the durations of the billing periods in the consecutive billing period.
 - Cost: the cost field of the latest billing period, as defined for the selected currency conversion mode.
@@ -99,7 +101,7 @@ We define the "closest consecutive billing period" as the latest consecutive bil
   - if the subscription has at least one ongoing billing period, the status of the subscription is ongoing
   - if the subscription has at least one scheduled billing period and no ongoing billing period, the status of the subscription is scheduled
   - if the subscription has no ongoing or scheduled billing period, the status of the subscription is ended
-- OpenEnded: the subscription's closest consecutive billing period is OpenEnded
+- SubscriptionTermStatus: the SubscriptionTermStatus of the subscription's closest consecutive billing period
 
 - StartOn: StartOn of the subscription's closest consecutive billing period
 - EndOn: EndOn of the subscription's closest consecutive billing period
@@ -133,7 +135,7 @@ We define the "closest consecutive billing period" as the latest consecutive bil
 
 If a subscription has no billing periods (because the application-layer invariant is violated), the derived fields are defined as follows:
 - Status: ended
-- OpenEnded: false
+- SubscriptionTermStatus: fixed. EndOn is nil in this fallback; SubscriptionTermStatus is still fixed.
 - StartOn, EndOn, LifetimeStartOn, LifetimeEndOn, NextPaymentOn, LifetimeNextPaymentOn: nil
 - BillingCurrency, LifetimeBillingCurrency: nil
 - LifetimeSpanBillingCost, LifetimeDurationBillingCost, LifetimeRemainingBillingCost: nil

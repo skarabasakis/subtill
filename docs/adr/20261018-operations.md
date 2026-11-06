@@ -455,7 +455,6 @@ Operations not listed below rely on struct validation only (for example `subscri
 #### subscription.start
 
 - `subscription_name_taken` — The request would create a new subscription, but another subscription already has this `name` (case-insensitive). Restarting an **inactive** subscription with the same name is allowed.
-- `invalid_start_on` — `startOn` is in the future when starting a **new** subscription (defaults to today when omitted).
 - `billing_period_not_consecutive` — Ending the current billing period and opening a new one would violate non-overlap or consecutivity (`previous.ends_on` must equal `new.starts_on`).
 - `icon_fetch_failed` — `iconAuto` is true and the favicon could not be resolved for `name` as domain.
 - `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
@@ -606,12 +605,18 @@ const (
   SubscriptionStatusScheduled SubscriptionStatus = "scheduled"
 )
 
+type SubscriptionTermStatus string
+const (
+  SubscriptionTermStatusOpenEnded SubscriptionTermStatus = "openended"
+  SubscriptionTermStatusFixed     SubscriptionTermStatus = "fixed"
+)
+
 type Subscription struct {
   SubscriptionRecord
 
   // Derived fields
   Status                       SubscriptionStatus `json:"status"`
-  OpenEnded                    bool               `json:"openEnded"`
+  SubscriptionTermStatus       SubscriptionTermStatus `json:"subscriptionTermStatus"`
   StartOn                      time.Date          `json:"startOn"`
   EndOn                        *time.Date         `json:"endOn"`
   Span                         int                `json:"span"`
@@ -657,7 +662,7 @@ type BillingPeriod struct {
   BillingPeriodRecord
 
   Status               SubscriptionStatus `json:"status"`
-  OpenEnded            bool               `json:"openEnded"`
+  SubscriptionTermStatus SubscriptionTermStatus `json:"subscriptionTermStatus"`
   SpanPaymentCount     int                `json:"spanPaymentCount"`
   DurationPaymentCount int                `json:"durationPaymentCount"`
   Span                 int                `json:"span"`
@@ -702,7 +707,7 @@ const (
 )
 
 type SubscriptionSort struct {
-  Field     SubscriptionSortFields `json:"field,omitempty" validate:"omitempty,oneof=id name openEnded startOn endOn span duration cost frequency monthlyCost yearlyCost spanCost durationCost remainingCost lifetimeStartOn lifetimeEndOn lifetimeNextPaymentOn lifetimeSpan lifetimeDuration lifetimeSpanCost lifetimeDurationCost lifetimeRemainingCost billingCurrency billingCost monthlyBillingCost yearlyBillingCost spanBillingCost durationBillingCost remainingBillingCost lifetimeBillingCurrency lifetimeSpanBillingCost lifetimeDurationBillingCost lifetimeRemainingBillingCost"`
+  Field     SubscriptionSortFields `json:"field,omitempty" validate:"omitempty,oneof=id name subscriptionTermStatus startOn endOn span duration cost frequency monthlyCost yearlyCost spanCost durationCost remainingCost lifetimeStartOn lifetimeEndOn lifetimeNextPaymentOn lifetimeSpan lifetimeDuration lifetimeSpanCost lifetimeDurationCost lifetimeRemainingCost billingCurrency billingCost monthlyBillingCost yearlyBillingCost spanBillingCost durationBillingCost remainingBillingCost lifetimeBillingCurrency lifetimeSpanBillingCost lifetimeDurationBillingCost lifetimeRemainingBillingCost"`
   Direction SortDirection          `json:"dir,omitempty"   validate:"omitempty,oneof=asc desc"`
 }
 
@@ -720,7 +725,7 @@ const (
   SubscriptionSortFieldID                           SubscriptionSortFields = "id"
   SubscriptionSortFieldName                         SubscriptionSortFields = "name"
   SubscriptionSortFieldGroup                        SubscriptionSortFields = "group"
-  SubscriptionSortFieldOpenEnded                    SubscriptionSortFields = "openEnded"
+  SubscriptionSortFieldSubscriptionTermStatus       SubscriptionSortFields = "subscriptionTermStatus"
   SubscriptionSortFieldStartOn                      SubscriptionSortFields = "startOn"
   SubscriptionSortFieldEndOn                        SubscriptionSortFields = "endOn"
   SubscriptionSortFieldSpan                         SubscriptionSortFields = "span"
@@ -804,7 +809,7 @@ type SubscriptionFiltersDb struct {
 type SubscriptionFilters struct {
   SubscriptionFiltersDb
 
-  OpenEnded                    bool               `json:"openEnded"`
+  SubscriptionTermStatus       SubscriptionTermStatus `json:"subscriptionTermStatus,omitempty" validate:"omitempty,oneof=openended fixed"`
   StartOn                      DateRangeFilter    `json:"startOn"                      validate:"dive"`
   EndOn                        DateRangeFilter    `json:"endOn"                        validate:"dive"`
   Span                         IntegerRangeFilter `json:"span"                         validate:"dive"`
@@ -856,6 +861,7 @@ type ReminderFilters struct {
 - Initializing the database is not an operation, since it is not exposed through the API or MCP.
 - Reminder notifications (OS notifications when a reminder is due, and tracking whether they have been sent) are a feature of the desktop application. They are not exposed through the api, mcp or cmd.
 - Not all subscription fields are sortable; only the fields listed in `SubscriptionSortFields` are. For example, subscriptions can't be sorted by group or tags.
+- `SubscriptionFilters.subscriptionTermStatus` omitted or empty matches every subscription. `openended` and `fixed` keep only subscriptions with that `SubscriptionTermStatus`. The empty string is the zero value and is not a status.
 - By design, `subscription.start` and `subscription.cancel` can't take an explicit end date. They accept a `duration` instead: an integer number of months, a multiple of the billing frequency, starting from zero. The end date is derived from it:
   - `subscription.start`: counted from `startOn`. A duration of 0 starts an ongoing billing period (no end date).
   - `subscription.cancel`: counted from the next charge date. A duration of 0 ends the subscription on the next charge date, i.e. at the end of the period already paid for.
