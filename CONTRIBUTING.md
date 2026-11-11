@@ -46,7 +46,7 @@ wails3 task -list
 - **`lint`** — golangci-lint + frontend/e2e oxlint
 - **`fmt`** — golangci-lint fmt + frontend/e2e oxfmt
 - **`openapi`** — regenerate Swagger under `internal/http/docs/` (commit results)
-- **`migrate:create`** — new SQL migration pair under `internal/core/migrate/migrations/`
+- **`migrate:create`** — new SQL migration pair under `internal/core/database/migrations/`
 
 #### Examples
 

@@ -1,0 +1,39 @@
+package store
+
+import (
+	"database/sql"
+	"errors"
+
+	"crdx.org/hereduck"
+	"github.com/jmoiron/sqlx"
+	"github.com/skarabasakis/subtill/internal/core/domain"
+)
+
+type PreferencesRepository struct{}
+
+// Get returns the singleton preferences row.
+func (PreferencesRepository) Get(q sqlx.Ext) (*domain.PreferencesRecord, error) {
+	var p domain.PreferencesRecord
+	err := sqlx.Get(q, &p, hereduck.D(`
+		SELECT currency, currency_conversion_mode FROM preferences WHERE id = 1
+	`))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// Upsert creates the singleton preferences row or replaces its values.
+func (PreferencesRepository) Upsert(q sqlx.Ext, preferences domain.PreferencesRecord) error {
+	_, err := sqlx.NamedExec(q, hereduck.D(`
+		INSERT INTO preferences (id, currency, currency_conversion_mode)
+		VALUES (1, :currency, :currency_conversion_mode)
+		ON CONFLICT (id) DO UPDATE
+		   SET currency = excluded.currency,
+		       currency_conversion_mode = excluded.currency_conversion_mode
+	`), preferences)
+	return err
+}
