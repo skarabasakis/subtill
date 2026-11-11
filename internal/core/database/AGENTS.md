@@ -136,12 +136,13 @@ Principles:
 
 - Use real files in `t.TempDir()`, never `:memory:`. The behavior under test is file-based.
 - The tests run in `wails3 task test` without a build tag, so each one stays well under a second.
-- Check the disk, not just the error. Failure cases also assert unchanged bytes (`Digest`), no sidecars (`AssertNoSidecars`), no backup and no open connections (`AssertNoOpenConnections`).
+- Check the disk, not just the error. Failure cases also assert unchanged bytes (`digest`), no sidecars (`assertNoSidecars`), no backup (`backups`) and no open connections (`assertNoOpenConnections`).
 
 Layout:
 
 - All tests are external (`package database_test`) and use the public API. Tests that need other migrations build a `Service` with `New(migrationsFS(...), WithBusyTimeout(100*time.Millisecond))` through the `newService` fixture.
-- Raw SQLite helpers live in `helpers_test.go` and are exported to the external tests through `export_test.go`. Those are the only internal test files.
+- Raw SQLite helpers live in `helpers_test.go`, also in `database_test`. They open files with their own connection strings and don't reuse unexported code, so there are no internal test files and no `export_test.go`.
+- Tests spell out the backup file name format (`backupName`) and find backups by listing the directory (`backups`) rather than calling the package's own naming code, so an accidental format change fails a test.
 - Tests sit in the file of the feature they cover: `create_test.go`, `open_test.go`, `migration_test.go`, `info_test.go`, `service_test.go`.
 
 Keep these regression cases:

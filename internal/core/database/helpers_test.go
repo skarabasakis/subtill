@@ -1,26 +1,47 @@
-package database
+package database_test
 
 import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/skarabasakis/subtill/internal/core/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// rawDB opens or creates path without going through the db service, with a
-// single connection and no pragmas besides a busy timeout. The connection is
-// closed at the end of the test; close it earlier before calling the db service.
+var uriPathEscaper = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
+
+// fileURI returns a SQLite URI filename for path, so that mode parameters are
+// honored.
+func fileURI(t testing.TB, path string) string {
+	t.Helper()
+	abs, err := filepath.Abs(path)
+	require.NoError(t, err)
+	p := filepath.ToSlash(abs)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return "file:" + uriPathEscaper.Replace(p)
+}
+
+// rawDB opens or creates path without going through the database package,
+// with a single connection and no pragmas besides a busy timeout. The
+// connection is closed at the end of the test; close it earlier before calling
+// the database package.
 func rawDB(t testing.TB, path string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open(driverName, fileURI(path)+"?mode=rwc&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", fileURI(t, path)+"?mode=rwc&_pragma=busy_timeout(5000)")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
@@ -70,7 +91,7 @@ func digest(t testing.TB, path string) string {
 
 func assertNoSidecars(t testing.TB, path string) {
 	t.Helper()
-	for _, sidecar := range sidecarPaths(path) {
+	for _, sidecar := range []string{path + "-wal", path + "-shm"} {
 		_, err := os.Stat(sidecar)
 		assert.ErrorIs(t, err, fs.ErrNotExist, "%s exists", filepath.Base(sidecar))
 	}
@@ -82,16 +103,21 @@ func assertNoSidecars(t testing.TB, path string) {
 // databases can't be locked by SQLite connections, so they pass.
 func assertNoOpenConnections(t testing.TB, path string) {
 	t.Helper()
-	db, err := sql.Open(driverName, fileURI(path)+"?mode=rw&_pragma=locking_mode(EXCLUSIVE)")
+	db, err := sql.Open("sqlite", fileURI(t, path)+"?mode=rw&_pragma=locking_mode(EXCLUSIVE)")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
 	defer func() { require.NoError(t, db.Close()) }()
 
 	_, err = db.Exec("BEGIN EXCLUSIVE; COMMIT;")
-	if sqliteCode(err) == sqlite3.SQLITE_NOTADB {
+	if isNotADatabase(err) {
 		return
 	}
 	assert.NoError(t, err, "another connection to %s is open", filepath.Base(path))
+}
+
+func isNotADatabase(err error) bool {
+	var e *sqlite.Error
+	return errors.As(err, &e) && e.Code()&0xff == sqlite3.SQLITE_NOTADB
 }
 
 // assertRefused checks the guarantees of an Open that returned an error.
@@ -104,9 +130,30 @@ func assertRefused(t testing.TB, path, digestBefore string, db any, closeFn func
 	assertNoOpenConnections(t, path)
 }
 
-func schemaError(t testing.TB, err error) *SchemaError {
+func schemaError(t testing.TB, err error) *database.SchemaError {
 	t.Helper()
-	var se *SchemaError
+	var se *database.SchemaError
 	require.True(t, errors.As(err, &se), "%v is not a *SchemaError", err)
 	return se
+}
+
+// backupName returns the documented backup file name
+// <path>.<YYYYMMDDTHHMMSS>.v<version>.bak.
+func backupName(path string, version uint, at time.Time) string {
+	return fmt.Sprintf("%s.%s.v%d.bak", path, at.Format("20060102T150405"), version)
+}
+
+// backups returns the backup files of the database at path, in name order.
+func backups(t testing.TB, path string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	var paths []string
+	prefix := filepath.Base(path) + "."
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) && strings.HasSuffix(e.Name(), ".bak") {
+			paths = append(paths, filepath.Join(filepath.Dir(path), e.Name()))
+		}
+	}
+	return paths
 }

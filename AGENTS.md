@@ -19,6 +19,8 @@ File names are prefixed with the date of creation in `YYYYMMDD-` format.
 
 ## Code Style Preferences
 
+### Implementation
+
 - Avoid comments unless they add value and clarify the code's intention.
 - Functions that involve multiple steps or complex logic should be structured hierarchically:
   - the top level function is a composed method that holds the context, owns the control flow and orchestrates the lower-level functions
@@ -32,11 +34,12 @@ File names are prefixed with the date of creation in `YYYYMMDD-` format.
     - checkX for guards that may return an error
     - validateX for input validation helpers
 
-## Testing
+### Tests
 
 - Test packages through their public API from an external `_test` package. Internal tests (`*_internal_test.go`) are a last resort for logic that can't be reached through the API.
-- When a test needs to vary a dependency (migration source, clock, timeout, filesystem, client), make it injectable instead of testing unexported functions: an exported constructor with options (`New(dep, opts...)`), while package-level functions keep using an unexported default instance built from the production dependencies. Never export or make reassignable the default instance.
-- Supply test scenarios as fixtures: in-memory (`fstest.MapFS`) or files under `testdata/`. Unexported test helpers may be shared with external tests through `export_test.go`.
+- When a test needs to vary a dependency (migration source, clock, timeout, filesystem, client), make it injectable instead of testing unexported functions
+- When testing a scenario requires fixtures, create them in-memory (`fstest.MapFS`) or as files under `testdata/`.
+- As much as possible, structure tests in BDD style: `Test<Subject>` only groups `t.Run("<assert> when <precondition>", ...)` subtests, one behavior each, split by blank lines into Given, When, and Then. Keep names to about 12 words, omit articles when the sentence stays clear, and keep related names symmetric.
 
 ## Workflows
 

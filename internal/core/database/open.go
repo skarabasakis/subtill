@@ -54,7 +54,10 @@ func (s *Service) checkDatabase(path string) error {
 		if err != nil {
 			return err
 		}
-		return s.checkSchemaState(path, state)
+		if err := s.checkSchemaState(path, state); err != nil {
+			return err
+		}
+		return nil
 	})
 }
 

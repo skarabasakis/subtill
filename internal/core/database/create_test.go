@@ -15,15 +15,18 @@ import (
 )
 
 func TestCreate(t *testing.T) {
-	t.Run("creates a current subtill database", func(t *testing.T) {
-		path := newDB(t)
+	t.Run("creates current WAL database with mode 0600 when path is absent", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "subtill.db")
 
-		assert.EqualValues(t, database.SubtillAppID, database.RawQueryInt(t, path, "PRAGMA application_id"))
-		version, dirty := database.RawSchemaState(t, path)
+		err := database.Create(path, testPreferences)
+
+		require.NoError(t, err)
+		assert.EqualValues(t, database.SubtillAppID, rawQueryInt(t, path, "PRAGMA application_id"))
+		version, dirty := rawSchemaState(t, path)
 		assert.Equal(t, database.SchemaVersion, version)
 		assert.False(t, dirty)
 
-		db := database.RawDB(t, path)
+		db := rawDB(t, path)
 		var currency, mode, journalMode string
 		require.NoError(t, db.QueryRow(`SELECT currency, currency_conversion_mode FROM preferences WHERE id = 1`).Scan(&currency, &mode))
 		require.NoError(t, db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode))
@@ -37,23 +40,25 @@ func TestCreate(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 		}
-		database.AssertNoSidecars(t, path)
-		database.AssertNoOpenConnections(t, path)
+		assertNoSidecars(t, path)
+		assertNoOpenConnections(t, path)
 
 		_, closeDB, err := database.Open(path, false)
 		require.NoError(t, err)
 		require.NoError(t, closeDB())
 	})
 
-	t.Run("takes omitted preferences from the locale", func(t *testing.T) {
+	t.Run("fills omitted preferences from locale when currency is unset", func(t *testing.T) {
 		t.Setenv("LC_ALL", "")
 		t.Setenv("LC_MONETARY", "")
 		t.Setenv("LANG", "ja_JP.UTF-8")
 		path := filepath.Join(t.TempDir(), "subtill.db")
-		require.NoError(t, database.Create(path, domain.Preferences{
-			CurrencyConversionMode: ptr(domain.CurrencyConversionModeLive),
-		}))
 
+		err := database.Create(path, domain.Preferences{
+			CurrencyConversionMode: ptr(domain.CurrencyConversionModeLive),
+		})
+
+		require.NoError(t, err)
 		db, closeDB, err := database.Open(path, false)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, closeDB()) }()
@@ -65,14 +70,16 @@ func TestCreate(t *testing.T) {
 		}, info.Preferences)
 	})
 
-	t.Run("path with URI special characters", func(t *testing.T) {
+	t.Run("creates file at literal path when name has URI characters", func(t *testing.T) {
 		name := "my subs #1 100%.db"
 		if runtime.GOOS != "windows" {
 			name = "what?" + name
 		}
 		path := filepath.Join(t.TempDir(), name)
-		require.NoError(t, database.Create(path, testPreferences))
 
+		err := database.Create(path, testPreferences)
+
+		require.NoError(t, err)
 		_, closeDB, err := database.Open(path, false)
 		require.NoError(t, err)
 		require.NoError(t, closeDB())
@@ -82,31 +89,35 @@ func TestCreate(t *testing.T) {
 		assert.Equal(t, name, entries[0].Name())
 	})
 
-	t.Run("existing file", func(t *testing.T) {
+	t.Run("returns ErrAlreadyExists and leaves file unchanged when path exists", func(t *testing.T) {
 		path := newDB(t)
-		before := database.Digest(t, path)
+		before := digest(t, path)
 
 		err := database.Create(path, testPreferences)
+
 		assert.ErrorIs(t, err, database.ErrAlreadyExists)
-		assert.Equal(t, before, database.Digest(t, path))
-		database.AssertNoSidecars(t, path)
+		assert.Equal(t, before, digest(t, path))
+		assertNoSidecars(t, path)
 	})
 
-	t.Run("missing parent directory", func(t *testing.T) {
+	t.Run("returns an error and creates nothing when parent directory is missing", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "missing")
+
 		err := database.Create(filepath.Join(dir, "subtill.db"), testPreferences)
+
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, database.ErrAlreadyExists)
 		_, statErr := os.Stat(dir)
 		assert.ErrorIs(t, statErr, fs.ErrNotExist)
 	})
 
-	t.Run("concurrent calls", func(t *testing.T) {
+	t.Run("lets exactly one caller succeed when creates run concurrently", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "subtill.db")
 		const n = 8
 		errs := make([]error, n)
 		start := make(chan struct{})
 		var wg sync.WaitGroup
+
 		for i := range n {
 			wg.Go(func() {
 				<-start
@@ -130,23 +141,28 @@ func TestCreate(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, closeDB())
 	})
-}
 
-func TestCreateMigrationFailure(t *testing.T) {
-	for name, bad := range map[string]string{
-		"failing migration":     migrationFailing,
-		"foreign key violation": migrationFKViolates,
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "subtill.db")
+	t.Run("returns ErrMigrationFailed and removes files when a statement fails", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "subtill.db")
 
-			err := newService(t, migrationBase, bad).Create(path, testPreferences)
-			require.ErrorIs(t, err, database.ErrMigrationFailed)
-			_, statErr := os.Stat(path)
-			assert.ErrorIs(t, statErr, os.ErrNotExist)
-			database.AssertNoSidecars(t, path)
+		err := newService(t, migrationBase, migrationFailing).Create(path, testPreferences)
 
-			require.NoError(t, newService(t, migrationBase).Create(path, testPreferences))
-		})
-	}
+		require.ErrorIs(t, err, database.ErrMigrationFailed)
+		_, statErr := os.Stat(path)
+		assert.ErrorIs(t, statErr, os.ErrNotExist)
+		assertNoSidecars(t, path)
+		require.NoError(t, newService(t, migrationBase).Create(path, testPreferences))
+	})
+
+	t.Run("returns ErrMigrationFailed and removes files when foreign keys fail", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "subtill.db")
+
+		err := newService(t, migrationBase, migrationFKViolates).Create(path, testPreferences)
+
+		require.ErrorIs(t, err, database.ErrMigrationFailed)
+		_, statErr := os.Stat(path)
+		assert.ErrorIs(t, statErr, os.ErrNotExist)
+		assertNoSidecars(t, path)
+		require.NoError(t, newService(t, migrationBase).Create(path, testPreferences))
+	})
 }
