@@ -5,10 +5,10 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type SubscriptionRepository struct{}
+type Subscriptions struct{}
 
 // Count returns the number of subscriptions.
-func (SubscriptionRepository) Count(q sqlx.Ext) (int, error) {
+func (Subscriptions) Count(q sqlx.Ext) (int, error) {
 	var count int
 	err := sqlx.Get(q, &count, hereduck.D(`
 		SELECT COUNT(*) FROM subscriptions s WHERE 1=1

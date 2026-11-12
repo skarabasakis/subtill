@@ -797,7 +797,7 @@ type ArrayFilter struct {
   Operator string   `json:"operator,omitempty" validate:"omitempty,oneof=all any"` // default any when omitted
 }
 
-// Subset of SubscriptionFilters that SubscriptionRepository may apply in SQL.
+// Subset of SubscriptionFilters that store.Subscriptions may apply in SQL.
 // Zero value means no extra predicates. See repositories ADR for SQL mapping.
 type SubscriptionFiltersDb struct {
   Name   StringFilter         `json:"name"   validate:"dive"`

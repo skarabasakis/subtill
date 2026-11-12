@@ -75,7 +75,7 @@ func setApplicationID(db *sql.DB) error {
 }
 
 func storePreferences(db *sql.DB, record domain.PreferencesRecord) error {
-	if err := (store.PreferencesRepository{}).Upsert(sqlx.NewDb(db, driverName), record); err != nil {
+	if err := (store.Preferences{}).Upsert(sqlx.NewDb(db, driverName), record); err != nil {
 		return fmt.Errorf("store preferences: %w", err)
 	}
 	return nil

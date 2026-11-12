@@ -21,11 +21,11 @@ func Info(db *sqlx.DB) (*DBInfo, error) {
 
 // Info describes the database behind a pool returned by Open.
 func (s *Service) Info(db *sqlx.DB) (*DBInfo, error) {
-	count, err := store.SubscriptionRepository{}.Count(db)
+	count, err := store.Subscriptions{}.Count(db)
 	if err != nil {
 		return nil, fmt.Errorf("count subscriptions: %w", err)
 	}
-	preferences, err := store.PreferencesRepository{}.Get(db)
+	preferences, err := store.Preferences{}.Get(db)
 	if err != nil {
 		return nil, fmt.Errorf("get preferences: %w", err)
 	}

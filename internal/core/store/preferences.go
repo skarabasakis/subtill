@@ -9,10 +9,10 @@ import (
 	"github.com/skarabasakis/subtill/internal/core/domain"
 )
 
-type PreferencesRepository struct{}
+type Preferences struct{}
 
 // Get returns the singleton preferences row.
-func (PreferencesRepository) Get(q sqlx.Ext) (*domain.PreferencesRecord, error) {
+func (Preferences) Get(q sqlx.Ext) (*domain.PreferencesRecord, error) {
 	var p domain.PreferencesRecord
 	err := sqlx.Get(q, &p, hereduck.D(`
 		SELECT currency, currency_conversion_mode FROM preferences WHERE id = 1
@@ -27,7 +27,7 @@ func (PreferencesRepository) Get(q sqlx.Ext) (*domain.PreferencesRecord, error) 
 }
 
 // Upsert creates the singleton preferences row or replaces its values.
-func (PreferencesRepository) Upsert(q sqlx.Ext, preferences domain.PreferencesRecord) error {
+func (Preferences) Upsert(q sqlx.Ext, preferences domain.PreferencesRecord) error {
 	_, err := sqlx.NamedExec(q, hereduck.D(`
 		INSERT INTO preferences (id, currency, currency_conversion_mode)
 		VALUES (1, :currency, :currency_conversion_mode)

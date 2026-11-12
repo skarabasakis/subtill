@@ -77,7 +77,7 @@ flowchart TD
 1. Create the file with `os.OpenFile(path, O_RDWR|O_CREATE|O_EXCL, 0o600)`, so two processes can't both create it. A zero-byte file is a valid empty SQLite database.
 2. Run all migrations and `foreign_key_check` on a migration pool. No backup, since there is nothing to back up.
 3. Set `PRAGMA application_id`.
-4. Store `preferences.AppliedTo(locale.DefaultPreferences())` with `PreferencesRepository.Upsert`.
+4. Store `preferences.AppliedTo(locale.DefaultPreferences())` with `store.Preferences.Upsert`.
 
 If any step fails, remove `path`, `path-wal` and `path-shm`, so a failed attempt can be retried. `Create` returns no handle; callers then call `Open(path, false)`.
 
