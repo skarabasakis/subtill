@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 
+	"cloud.google.com/go/civil"
 	"github.com/jmoiron/sqlx"
 	"github.com/skarabasakis/subtill/internal/core/domain"
 	"github.com/skarabasakis/subtill/internal/core/store"
@@ -21,7 +22,7 @@ func Info(db *sqlx.DB) (*DBInfo, error) {
 
 // Info describes the database behind a pool returned by Open.
 func (s *Service) Info(db *sqlx.DB) (*DBInfo, error) {
-	count, err := store.Subscriptions{}.Count(db)
+	count, err := store.Subscriptions{}.Count(db, nil, civil.Date{})
 	if err != nil {
 		return nil, fmt.Errorf("count subscriptions: %w", err)
 	}

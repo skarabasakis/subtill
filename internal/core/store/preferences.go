@@ -1,9 +1,6 @@
 package store
 
 import (
-	"database/sql"
-	"errors"
-
 	"crdx.org/hereduck"
 	"github.com/jmoiron/sqlx"
 	"github.com/skarabasakis/subtill/internal/core/domain"
@@ -11,16 +8,16 @@ import (
 
 type Preferences struct{}
 
+var preferencesColumns = []string{
+	"currency",
+	"currency_conversion_mode",
+}
+
 // Get returns the singleton preferences row.
 func (Preferences) Get(q sqlx.Ext) (*domain.PreferencesRecord, error) {
 	var p domain.PreferencesRecord
-	err := sqlx.Get(q, &p, hereduck.D(`
-		SELECT currency, currency_conversion_mode FROM preferences WHERE id = 1
-	`))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
+	query := "SELECT " + columnList(preferencesColumns) + " FROM preferences WHERE id = 1"
+	if err := getOne(q, &p, query, map[string]any{}); err != nil {
 		return nil, err
 	}
 	return &p, nil

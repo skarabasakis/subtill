@@ -1,5 +1,5 @@
 CREATE TABLE subscriptions (
-    id      TEXT NOT NULL PRIMARY KEY,
+    id      TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
     name    TEXT NOT NULL COLLATE NOCASE UNIQUE,
     "group" TEXT,
     notes   TEXT,
@@ -8,14 +8,14 @@ CREATE TABLE subscriptions (
 );
 
 CREATE TABLE tags (
-    id              TEXT NOT NULL PRIMARY KEY,
+    id              TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
     subscription_id TEXT NOT NULL REFERENCES subscriptions (id) ON DELETE CASCADE,
     tag             TEXT NOT NULL COLLATE NOCASE,
     UNIQUE (subscription_id, tag)
 );
 
 CREATE TABLE billing_periods (
-    id               TEXT    NOT NULL PRIMARY KEY,
+    id               TEXT    NOT NULL PRIMARY KEY CHECK (id <> ''),
     subscription_id  TEXT    NOT NULL REFERENCES subscriptions (id) ON DELETE CASCADE,
     billing_currency TEXT    NOT NULL,
     billing_cost     TEXT    NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE billing_periods (
 );
 
 CREATE TABLE reminders (
-    id              TEXT    NOT NULL PRIMARY KEY,
+    id              TEXT    NOT NULL PRIMARY KEY CHECK (id <> ''),
     subscription_id TEXT    NOT NULL REFERENCES subscriptions (id) ON DELETE CASCADE,
     action          TEXT    NOT NULL CHECK (action IN ('cancel', 'renew', 'custom')),
     custom_note     TEXT,

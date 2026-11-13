@@ -798,7 +798,7 @@ type ArrayFilter struct {
 }
 
 // Subset of SubscriptionFilters that store.Subscriptions may apply in SQL.
-// Zero value means no extra predicates. See repositories ADR for SQL mapping.
+// Zero value means no extra predicates. See internal/core/store/AGENTS.md.
 type SubscriptionFiltersDb struct {
   Name   StringFilter         `json:"name"   validate:"dive"`
   Group  string               `json:"group"`
