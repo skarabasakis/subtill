@@ -8,7 +8,7 @@ File names are prefixed with the date of creation in `YYYYMMDD-` format.
 
 - Product Requirements Documents: `docs/prd/` (product feature descriptions, requirements, and user stories). They are not perpetually maintained and can diverge from the codebase.
 - Architectural Decision Records: `docs/adr/` (technical design documents, documentation of technical decisions, trade-offs, and rationale). They are kept up to date with the codebase. Avoid duplicating the same information into multiple ADRs.
-- Package guidance: an `AGENTS.md` next to the code holds the invariants and rules for changing that package (e.g. `internal/core/database/AGENTS.md`). It is kept up to date with the package.
+- Package guidance: an `AGENTS.md` next to the code holds the invariants and rules for changing that package (e.g. `internal/core/database/AGENTS.md`). It is kept up to date with the package. It covers the package's purpose, organization principles, boundaries and the intent behind design decisions. It should not contain implementation details readable from the code (identifiers, signatures, file contents).
 
 ## Layout
 
