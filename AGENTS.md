@@ -40,6 +40,7 @@ File names are prefixed with the date of creation in `YYYYMMDD-` format.
 - When a test needs to vary a dependency (migration source, clock, timeout, filesystem, client), make it injectable instead of testing unexported functions
 - When testing a scenario requires fixtures, create them in-memory (`fstest.MapFS`) or as files under `testdata/`.
 - As much as possible, structure tests in BDD style: `Test<Subject>` only groups `t.Run("<assert> when <precondition>", ...)` subtests, one behavior each, split by blank lines into Given, When, and Then. Keep names to about 12 words, omit articles when the sentence stays clear, and keep related names symmetric.
+- Unit tests whose unit is an individual public function or method must be nested by that function: `Test<Type>` holds one `t.Run("<Method>", ...)` group per public method, in declaration order, and each group holds the BDD behavior subtests. A behavior subtest exercises a single method; split subtests that assert on several methods. Package-level functions are grouped under `Test<Function>` directly.
 
 ## Workflows
 
