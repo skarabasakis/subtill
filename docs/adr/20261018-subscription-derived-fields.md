@@ -53,7 +53,7 @@ In approximate currency conversion mode:
 
 - MonthlyBillingCost, YearlyBillingCost, SpanBillingCost, DurationBillingCost, RemainingBillingCost: Defined same as the respective cost fields, but using the billing_cost instead of the cost field as the cost value, and expressed in the billing_currency instead of the default_currency.
 
-In live currency conversion mode, a converted amount is billing_cost multiplied by the exchange rate for the chosen date. The rate is the `exchange_rates` value for that billing_currency and date: units of the default currency per 1 unit of billing_currency. When billing_currency equals the default currency, the converted amount is billing_cost and no rate is used.
+In live currency conversion mode, a converted amount is billing_cost multiplied by the exchange rate for the chosen date. The rate is the `exchange_rates` value for that billing_currency (base), the default currency (quote) and the date: units of the default currency per 1 unit of billing_currency. When billing_currency equals the default currency, the converted amount is billing_cost and no rate is used.
 - cost: (derived -- the database cost field is ignored) billing_cost converted at the most recent payment date, or at today if the billing period is scheduled.
 - nextChargeCost: billing_cost converted at today.
 - MonthlyCost: the average monthly cost of the billing period, i.e. nextChargeCost / frequency

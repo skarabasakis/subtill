@@ -36,10 +36,11 @@ CREATE TABLE reminders (
 );
 
 CREATE TABLE exchange_rates (
-    currency    TEXT NOT NULL,
-    rate        TEXT NOT NULL,
-    exchange_on TEXT NOT NULL,
-    UNIQUE (currency, exchange_on)
+    base_currency  TEXT NOT NULL,
+    quote_currency TEXT NOT NULL,
+    rate           TEXT NOT NULL,
+    exchange_on    TEXT NOT NULL,
+    UNIQUE (base_currency, quote_currency, exchange_on)
 );
 
 CREATE TABLE preferences (

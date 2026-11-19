@@ -380,7 +380,7 @@ type PreferencesGetResponse struct {
 
 #### preferences.set
 
-Set database preferences. Omitted (nil) fields are left unchanged. Changing `Currency` recalculates the default-currency cost of all billing periods (and, in live mode, repopulates exchange rates) in a single transaction.
+Set database preferences. Omitted (nil) fields are left unchanged. Changing `Currency` recalculates the default-currency cost of all billing periods in a single transaction; rates for the recalculation are fetched before the transaction and are not cached (see the [currency service ADR](20261113-currency-service.md#changing-the-preferred-currency)). The exchange rate cache is not cleared: cached rates are keyed by quote currency, so they stay valid and are reused if the previous currency is selected again. Changing only `CurrencyConversionMode` leaves stored costs unchanged.
 
 ```go
 // validate:"at_least_one_set" on PreferencesSetRequest
@@ -440,7 +440,7 @@ The conditions below are **logical** errors checked after request validation suc
 
 #### Cross-cutting
 
-- `exchange_rate_unavailable` — A conversion needs an exchange rate (`currency.convert`, or payment derivation in **live** mode) and the rate cannot be resolved from cache or online sources for the requested date.
+- `exchange_rate_unavailable` — A conversion needs an exchange rate and it cannot be obtained for the requested date: `currency.convert`, `costAuto` and `preferences.set` fetch it from the exchange rate provider; payment derivation in **live** mode reads it from the cache, or fetches it from the provider when it is not cached.
 
 Operations not listed below rely on struct validation only (for example `subscription.list`, `reminder.list`, `preferences.get`).
 
@@ -457,14 +457,14 @@ Operations not listed below rely on struct validation only (for example `subscri
 - `subscription_name_taken` — The request would create a new subscription, but another subscription already has this `name` (case-insensitive). Restarting an **inactive** subscription with the same name is allowed.
 - `billing_period_not_consecutive` — Ending the current billing period and opening a new one would violate non-overlap or consecutivity (`previous.ends_on` must equal `new.starts_on`).
 - `icon_fetch_failed` — `iconAuto` is true and the favicon could not be resolved for `name` as domain.
-- `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
+- `exchange_rate_unavailable` — `costAuto` is true and the rate cannot be fetched for the billing currency, preferred currency, and derived `exchangeOn`.
 
 #### subscription.edit
 
 - `subscription_not_found` — No subscription exists with the given `id`.
 - `subscription_name_taken` — `name` is changed to a value that another subscription already has (case-insensitive).
 - `icon_fetch_failed` — `iconAuto` is true and the favicon could not be resolved for the effective subscription name.
-- `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
+- `exchange_rate_unavailable` — `costAuto` is true and the rate cannot be fetched for the billing currency, preferred currency, and derived `exchangeOn`.
 
 #### subscription.cancel
 
@@ -488,7 +488,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 - `subscription_not_found` — No subscription exists with the given `subscriptionId`.
 - `billing_period_overlap` — The new period overlaps an existing billing period on the same subscription.
 - `billing_period_not_consecutive` — The new period does not abut existing periods where required (gaps or crossing boundaries that violate application invariants).
-- `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
+- `exchange_rate_unavailable` — `costAuto` is true and the rate cannot be fetched for the billing currency, preferred currency, and derived `exchangeOn`.
 
 #### billingPeriod.edit
 
@@ -497,7 +497,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 - `billing_period_overlap` — The updated period overlaps another period on the same subscription.
 - `billing_period_not_consecutive` — Updated dates break consecutivity with adjacent periods.
 - `cannot_clear_end_on` — `endOn` is cleared on a billing period that is not the latest for its subscription.
-- `exchange_rate_unavailable` — `costAuto` is true and conversion cannot be resolved for the billing currency, preferred currency, and derived `exchangeOn`.
+- `exchange_rate_unavailable` — `costAuto` is true and the rate cannot be fetched for the billing currency, preferred currency, and derived `exchangeOn`.
 
 #### billingPeriod.delete
 
@@ -524,7 +524,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 
 #### preferences.set
 
-- `exchange_rate_unavailable` — `currency` or `currencyConversionMode` changes require repopulating rates or recalculating stored costs and conversion fails—the whole update is rolled back.
+- `exchange_rate_unavailable` — `currency` changes and recalculating a stored cost needs a rate that cannot be fetched—nothing is written.
 
 #### icon.fetch
 
@@ -532,7 +532,7 @@ Operations not listed below rely on struct validation only (for example `subscri
 
 #### currency.convert
 
-- `exchange_rate_unavailable` — No rate can be resolved for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today).
+- `exchange_rate_unavailable` — No rate can be fetched for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today).
 
 ## Shared types
 
