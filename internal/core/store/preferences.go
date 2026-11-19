@@ -25,12 +25,11 @@ func (Preferences) Get(q sqlx.Ext) (*domain.PreferencesRecord, error) {
 
 // Upsert creates the singleton preferences row or replaces its values.
 func (Preferences) Upsert(q sqlx.Ext, preferences domain.PreferencesRecord) error {
-	_, err := sqlx.NamedExec(q, hereduck.D(`
+	return exec(q, hereduck.D(`
 		INSERT INTO preferences (id, currency, currency_conversion_mode)
 		VALUES (1, :currency, :currency_conversion_mode)
 		ON CONFLICT (id) DO UPDATE
 		   SET currency = excluded.currency,
 		       currency_conversion_mode = excluded.currency_conversion_mode
 	`), preferences)
-	return err
 }

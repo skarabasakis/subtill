@@ -1,6 +1,9 @@
 package store
 
 import (
+	"database/sql"
+	"fmt"
+
 	"cloud.google.com/go/civil"
 	"crdx.org/hereduck"
 	"github.com/jmoiron/sqlx"
@@ -16,6 +19,53 @@ var reminderColumns = []string{
 	"custom_note",
 	"trigger_on",
 	"is_triggered",
+}
+
+type reminderRow struct {
+	ID             string                `db:"id"`
+	SubscriptionID string                `db:"subscription_id"`
+	Action         domain.ReminderAction `db:"action"`
+	CustomNote     sql.NullString        `db:"custom_note"`
+	TriggerOn      string                `db:"trigger_on"`
+	IsTriggered    bool                  `db:"is_triggered"`
+}
+
+func reminderRowFrom(r domain.ReminderRecord) reminderRow {
+	return reminderRow{
+		ID:             r.ID,
+		SubscriptionID: r.SubscriptionID,
+		Action:         r.Action,
+		CustomNote:     sql.NullString{String: r.CustomNote, Valid: true},
+		TriggerOn:      r.TriggerOn.String(),
+		IsTriggered:    r.IsTriggered,
+	}
+}
+
+func (r reminderRow) record() (domain.ReminderRecord, error) {
+	triggerOn, err := civil.ParseDate(r.TriggerOn)
+	if err != nil {
+		return domain.ReminderRecord{}, fmt.Errorf("reminder %s trigger_on: %w", r.ID, err)
+	}
+	return domain.ReminderRecord{
+		ID:             r.ID,
+		SubscriptionID: r.SubscriptionID,
+		Action:         r.Action,
+		CustomNote:     r.CustomNote.String,
+		TriggerOn:      triggerOn,
+		IsTriggered:    r.IsTriggered,
+	}, nil
+}
+
+func reminderRecords(rows []reminderRow) ([]domain.ReminderRecord, error) {
+	records := make([]domain.ReminderRecord, 0, len(rows))
+	for _, row := range rows {
+		record, err := row.record()
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
 }
 
 func (Reminders) ListAll(q sqlx.Ext) ([]domain.ReminderRecord, error) {

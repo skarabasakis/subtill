@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -20,6 +21,26 @@ var subscriptionColumns = []string{
 	"notes",
 	"icon",
 	"url",
+}
+
+type subscriptionRow struct {
+	ID    string         `db:"id"`
+	Name  string         `db:"name"`
+	Group sql.NullString `db:"group"`
+	Notes sql.NullString `db:"notes"`
+	Icon  sql.NullString `db:"icon"`
+	URL   sql.NullString `db:"url"`
+}
+
+func (r subscriptionRow) record() domain.SubscriptionRecord {
+	return domain.SubscriptionRecord{
+		ID:    r.ID,
+		Name:  r.Name,
+		Group: r.Group.String,
+		Notes: r.Notes.String,
+		Icon:  r.Icon.String,
+		URL:   r.URL.String,
+	}
 }
 
 // Count returns the number of subscriptions matching filter. A nil filter

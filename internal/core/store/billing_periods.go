@@ -2,7 +2,9 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 
+	"cloud.google.com/go/civil"
 	"crdx.org/hereduck"
 	"github.com/jmoiron/sqlx"
 	"github.com/skarabasakis/subtill/internal/core/domain"
@@ -22,6 +24,66 @@ var billingPeriodColumns = []string{
 }
 
 const billingPeriodsOrder = `ORDER BY start_on`
+
+// billingPeriodRow is scanned from billing_periods columns and also decoded
+// from the JSON objects of billingPeriodsAggregate, so its json tags must
+// match its db tags.
+type billingPeriodRow struct {
+	ID              string  `db:"id"               json:"id"`
+	SubscriptionID  string  `db:"subscription_id"  json:"subscription_id"`
+	BillingCurrency string  `db:"billing_currency" json:"billing_currency"`
+	BillingCost     string  `db:"billing_cost"     json:"billing_cost"`
+	Cost            string  `db:"cost"             json:"cost"`
+	Frequency       int     `db:"frequency"        json:"frequency"`
+	StartOn         string  `db:"start_on"         json:"start_on"`
+	EndOn           *string `db:"end_on"           json:"end_on"`
+}
+
+func billingPeriodRowFrom(r domain.BillingPeriodRecord) billingPeriodRow {
+	return billingPeriodRow{
+		ID:              r.ID,
+		SubscriptionID:  r.SubscriptionID,
+		BillingCurrency: r.BillingCurrency,
+		BillingCost:     r.BillingCost,
+		Cost:            r.Cost,
+		Frequency:       r.Frequency,
+		StartOn:         r.StartOn.String(),
+		EndOn:           nullableDate(r.EndOn),
+	}
+}
+
+func (r billingPeriodRow) record() (domain.BillingPeriodRecord, error) {
+	startOn, err := civil.ParseDate(r.StartOn)
+	if err != nil {
+		return domain.BillingPeriodRecord{}, fmt.Errorf("billing period %s start_on: %w", r.ID, err)
+	}
+	endOn, err := parseNullableDate(r.EndOn)
+	if err != nil {
+		return domain.BillingPeriodRecord{}, fmt.Errorf("billing period %s end_on: %w", r.ID, err)
+	}
+	return domain.BillingPeriodRecord{
+		ID:              r.ID,
+		SubscriptionID:  r.SubscriptionID,
+		StartOn:         startOn,
+		EndOn:           endOn,
+		Frequency:       r.Frequency,
+		BillingCurrency: r.BillingCurrency,
+		BillingCost:     r.BillingCost,
+		Cost:            r.Cost,
+	}, nil
+}
+
+func billingPeriodRecords(rows []billingPeriodRow) ([]domain.BillingPeriodRecord, error) {
+	records := make([]domain.BillingPeriodRecord, 0, len(rows))
+	for _, row := range rows {
+		record, err := row.record()
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
 
 // ListBySubscriptionID returns the billing periods of a subscription, oldest
 // first.
