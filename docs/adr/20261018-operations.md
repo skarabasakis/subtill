@@ -67,7 +67,7 @@ Project-registered tags used in request and filter structs (in addition to built
 | Tag | Behavior |
 |-----|----------|
 | `decimal` | Non-empty valid non-negative decimal string (`govalues/decimal` rules). |
-| `currency` | Non-empty supported ISO-like currency code. |
+| `currency` | Non-empty ISO 4217 code in the supported currencies list (see [Validation](./20261113-currency-service.md#validation)). |
 | `date_range` | Struct-level on `DateRangeFilter`: if both bounds are set, `gte < lt` (calendar dates). |
 | `int_range` | Struct-level on `IntegerRangeFilter`: if both bounds are set, `gte <= lte`. |
 | `decimal_range` | Struct-level on `DecimalRangeFilter`: if both bounds are set, compare with `govalues/decimal` (`gte <= lte`). |
