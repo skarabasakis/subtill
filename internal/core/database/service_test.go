@@ -20,10 +20,7 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
-var testPreferences = domain.Preferences{
-	Currency:               ptr("EUR"),
-	CurrencyConversionMode: ptr(domain.CurrencyConversionModeLive),
-}
+var testPreferences = domain.Preferences{Currency: ptr("EUR")}
 
 func newDB(t *testing.T) string {
 	t.Helper()
@@ -35,9 +32,8 @@ func newDB(t *testing.T) string {
 var (
 	migrationBase = hereduck.D(`
 		CREATE TABLE preferences (
-		    id                       INTEGER PRIMARY KEY CHECK (id = 1),
-		    currency                 TEXT NOT NULL,
-		    currency_conversion_mode TEXT NOT NULL
+		    id       INTEGER PRIMARY KEY CHECK (id = 1),
+		    currency TEXT NOT NULL
 		);
 		CREATE TABLE parents (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE children (

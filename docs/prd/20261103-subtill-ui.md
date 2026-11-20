@@ -27,7 +27,6 @@ Bottom section: A vertically stacked list of all databases created through the d
 A `@shadcn/dialog` containing a `<form/>` with the following `@shadcn/field` items:
 - "Display Name": An `@shadcn/input` field for the display name of the database.
 - "Currency": A `@shadcn/comboBox` menu for the currency of the database, populated from a list of supported currencies embedded in the application.
-- "Currency Conversion": A `@shadcn/radioGroup` menu for the currency conversion mode, providing two options: "Approximate" and "Live".
 
 When submitted, the form triggers the save file dialog with a default name that matches the database name. Once the file is created, an entry is added to the launcher list with the chosen filesystem path.
 
@@ -73,7 +72,6 @@ Contains a `<form/>` with the following `@shadcn/field` items:
   - Cost: An `@shadcn/input` field for the billing cost of the subscription. inputmode is "decimal" with a placeholder of "0.00".
   - Frequency: Prefixed with the word "per" and a space, then a `@shadcn/dropdownMenu` menu with the following options: "month", "quarter (3 months)", "trimester (4 months)", "semester (6 months)", "year", "2 years", "3 years", "5 years", "10 years". Default is "month".
   - Tags: A `@formcn/tag-input` field for the tags of the subscription.
-- "Cost": An `@shadcn/input` field for the cost of the subscription.
 - "Frequency": A `@shadcn/comboBox` menu for the frequency of the subscription, populated from a list of supported frequencies embedded in the application.
 - "Start On": A `@shadcn/datePicker` field for the start date of the subscription.
 - "Duration": A `@shadcn/radioGroup` menu for the duration of the subscription, with options:

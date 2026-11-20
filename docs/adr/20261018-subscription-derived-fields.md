@@ -9,7 +9,7 @@ This document provides definitions for fields that are derived from other fields
 - Billing periods for a subscription are strictly non-overlapping. Corollaries:
   - Only the most recent billing period can be open-ended
 - Consecutive billing periods satisfy `billing_period[n].ends_on = billing_period[n+1].starts_on`.
-- **Payments** are derived from billing periods and the ongoing exchange-rate preference; they are not stored.
+- **Payments** are derived from billing periods, the preferred currency and the exchange rates; they are not stored.
 - Payment dates (charge dates) of a billing period are its start_on and every later date less than end_on at a whole multiple of frequency months from start_on, on the MonthsInterval charge calendar. A nil end_on does not limit them. The most recent payment date is the latest of these on or before now. The next payment date is NextPaymentOn(start_on, end_on, frequency, now).
 
 ## Symbols
@@ -24,7 +24,7 @@ This document provides definitions for fields that are derived from other fields
 
 - NextPaymentOn(startOn, endOn, frequency, now): the earliest payment date on or after now. Payment dates are startOn and every later date at a whole multiple of frequency months from startOn, on the MonthsInterval charge calendar. frequency is a positive integer. A nil endOn leaves the payment dates unbounded; MonthsInterval's nil endOn, the day after now, does not apply. endOn is not a payment date: a non-nil endOn excludes every date on or after it. now is returned when it is a payment date. The result is nil when startOn is nil, or when no payment date remains on or after now within that bound.
 
-- Decimal division in MonthlyCost and YearlyCost, and in the billing-currency fields that use the same formulas, rounds the field's final value half away from zero to the minor-unit scale of the currency that field is expressed in. The scale is the ISO 4217 exponent of that currency code (for example 2 for USD and EUR, 0 for JPY, 3 for KWD). A code with no ISO 4217 exponent uses scale 2. The factor 12 / frequency is not rounded before it multiplies the charge amount. The schema does not store this scale.
+- Decimal division in MonthlyCost, YearlyCost, MonthlyBillingCost and YearlyBillingCost rounds the field's final value half away from zero to the minor-unit scale of the currency that field is expressed in. The scale is the ISO 4217 exponent of that currency code (for example 2 for USD and EUR, 0 for JPY, 3 for KWD). A code with no ISO 4217 exponent uses scale 2. The factor 12 / frequency is not rounded before it multiplies the charge amount. The schema does not store this scale.
 
 ## BillingPeriod
 
@@ -41,20 +41,8 @@ This document provides definitions for fields that are derived from other fields
 - Duration: DurationPaymentCount × frequency.
 - NextPaymentOn: NextPaymentOn(start_on, end_on, frequency, now).
 
-In approximate currency conversion mode:
-- cost: (static, from the database)
-- nextChargeCost: cost
-- MonthlyCost: the average monthly cost of the billing period, i.e. nextChargeCost / frequency
-- YearlyCost: the average yearly cost of the billing period, i.e. nextChargeCost * (12 / frequency), where 12 / frequency is decimal division
-
-- SpanCost: DurationCost + RemainingCost
-- DurationCost: cost × DurationPaymentCount
-- RemainingCost: nextChargeCost × (SpanPaymentCount - DurationPaymentCount). Corollary: zero for open-ended billing periods.
-
-- MonthlyBillingCost, YearlyBillingCost, SpanBillingCost, DurationBillingCost, RemainingBillingCost: Defined same as the respective cost fields, but using the billing_cost instead of the cost field as the cost value, and expressed in the billing_currency instead of the default_currency.
-
-In live currency conversion mode, a converted amount is billing_cost multiplied by the exchange rate for the chosen date. The rate is the `exchange_rates` value for that billing_currency (base), the default currency (quote) and the date: units of the default currency per 1 unit of billing_currency. When billing_currency equals the default currency, the converted amount is billing_cost and no rate is used.
-- cost: (derived -- the database cost field is ignored) billing_cost converted at the most recent payment date, or at today if the billing period is scheduled.
+The cost fields are expressed in the preferred currency. None of them is stored: each is calculated from billing_cost and the exchange rates. A converted amount is billing_cost multiplied by the exchange rate for the chosen date. The rate is the `exchange_rates` value for that billing_currency (base), the preferred currency (quote) and the date: units of the preferred currency per 1 unit of billing_currency. When billing_currency equals the preferred currency, the converted amount is billing_cost and no rate is used.
+- cost: billing_cost converted at the most recent payment date, or at today if the billing period is scheduled.
 - nextChargeCost: billing_cost converted at today.
 - MonthlyCost: the average monthly cost of the billing period, i.e. nextChargeCost / frequency
 - YearlyCost: the average yearly cost of the billing period, i.e. nextChargeCost * (12 / frequency), where 12 / frequency is decimal division
@@ -62,6 +50,14 @@ In live currency conversion mode, a converted amount is billing_cost multiplied 
 - SpanCost: DurationCost + RemainingCost
 - DurationCost: the sum of billing_cost converted at each charge date on or before now. Charge dates after now are not included; they contribute to RemainingCost.
 - RemainingCost: nextChargeCost × (SpanPaymentCount - DurationPaymentCount). Corollary: zero for open-ended billing periods.
+
+The billing cost fields are expressed in the billing_currency, with no currency conversion:
+- MonthlyBillingCost: billing_cost / frequency
+- YearlyBillingCost: billing_cost × (12 / frequency), where 12 / frequency is decimal division
+
+- SpanBillingCost: DurationBillingCost + RemainingBillingCost
+- DurationBillingCost: billing_cost × DurationPaymentCount
+- RemainingBillingCost: billing_cost × (SpanPaymentCount - DurationPaymentCount). Corollary: zero for open-ended billing periods.
 
 ### Consecutive billing period
 
@@ -76,7 +72,7 @@ The fields of a consecutive billing period are defined as follows:
 - SubscriptionTermStatus: Derived from the end_on of the consecutive billing period, using the same logic as the BillingPeriod SubscriptionTermStatus.
 - Span: Derived from the start_on and the end_on of the consecutive billing period, using the same logic as the BillingPeriod Span. Corollary: Assuming end_on is a charge date, the span is equal to the sum of the spans of the billing periods in the consecutive billing period.
 - Duration: Derived from the start_on and the end_on of the consecutive billing period, using the same logic as the BillingPeriod Duration. Corollary: Assuming end_on is a charge date, the duration is equal to the sum of the durations of the billing periods in the consecutive billing period.
-- Cost: the cost field of the latest billing period, as defined for the selected currency conversion mode.
+- Cost: the cost field of the latest billing period.
 - Frequency: the frequency of the latest billing period.
 - NextPaymentOn: Derived from the StartOn, EndOn, and Frequency of the consecutive billing period, using the same logic as the BillingPeriod NextPaymentOn.
 - MonthlyCost: The MonthlyCost of the latest among the billing periods in the consecutive billing period
@@ -89,7 +85,7 @@ The fields of a consecutive billing period are defined as follows:
 - BillingCurrency: The common billing_currency of the billing periods in the consecutive billing period.
 - BillingCost: the billing_cost of the latest billing period.
 - MonthlyBillingCost, YearlyBillingCost: the MonthlyBillingCost and YearlyBillingCost of the latest billing period.
-- SpanBillingCost, DurationBillingCost, RemainingBillingCost: the sum of that field over the billing periods in the run. Each period uses its own billing_cost in the approximate-mode formulas, expressed in the BillingCurrency, with no currency conversion. A price change inside the run is included: a monthly run priced at 14 and then 16 has SpanBillingCost = 14 × the months priced at 14 + 16 × the months priced at 16.
+- SpanBillingCost, DurationBillingCost, RemainingBillingCost: the sum of that field over the billing periods in the run. Each period uses its own billing_cost, expressed in the BillingCurrency, with no currency conversion. A price change inside the run is included: a monthly run priced at 14 and then 16 has SpanBillingCost = 14 × the months priced at 14 + 16 × the months priced at 16.
 
 ### Closest Consecutive Billing Period
 
@@ -129,7 +125,7 @@ We define the "closest consecutive billing period" as the latest consecutive bil
 - BillingCost, MonthlyBillingCost, YearlyBillingCost, SpanBillingCost, DurationBillingCost, RemainingBillingCost: the field of that name on the closest consecutive billing period.
 
 - LifetimeBillingCurrency: If all billing periods share the same billing_currency, it is the billing_currency of the billing periods in the subscription. Otherwise, it is nil.
-- LifetimeSpanBillingCost, LifetimeDurationBillingCost, LifetimeRemainingBillingCost: if all billing periods share the same billing_currency, the sum of each billing period's SpanBillingCost, DurationBillingCost, or RemainingBillingCost. Each period substitutes its own billing_cost for cost in the approximate-mode formulas, with no currency conversion. Otherwise, they are nil.
+- LifetimeSpanBillingCost, LifetimeDurationBillingCost, LifetimeRemainingBillingCost: if all billing periods share the same billing_currency, the sum of each billing period's SpanBillingCost, DurationBillingCost, or RemainingBillingCost, with no currency conversion. Otherwise, they are nil.
 
 ## Corner case: No billing periods for a subscription
 

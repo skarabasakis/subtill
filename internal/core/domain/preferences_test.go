@@ -8,12 +8,8 @@ import (
 )
 
 func TestPreferencesAppliedTo(t *testing.T) {
-	base := domain.PreferencesRecord{
-		Currency:               "USD",
-		CurrencyConversionMode: domain.CurrencyConversionModeApproximate,
-	}
+	base := domain.PreferencesRecord{Currency: "USD"}
 	currency := "EUR"
-	live := domain.CurrencyConversionModeLive
 
 	cases := []struct {
 		name        string
@@ -21,14 +17,7 @@ func TestPreferencesAppliedTo(t *testing.T) {
 		want        domain.PreferencesRecord
 	}{
 		{"no fields set", domain.Preferences{}, base},
-		{"currency set", domain.Preferences{Currency: &currency}, domain.PreferencesRecord{
-			Currency:               "EUR",
-			CurrencyConversionMode: domain.CurrencyConversionModeApproximate,
-		}},
-		{"both set", domain.Preferences{Currency: &currency, CurrencyConversionMode: &live}, domain.PreferencesRecord{
-			Currency:               "EUR",
-			CurrencyConversionMode: domain.CurrencyConversionModeLive,
-		}},
+		{"currency set", domain.Preferences{Currency: &currency}, domain.PreferencesRecord{Currency: "EUR"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -10,7 +10,6 @@ type Preferences struct{}
 
 var preferencesColumns = []string{
 	"currency",
-	"currency_conversion_mode",
 }
 
 // Get returns the singleton preferences row.
@@ -26,10 +25,9 @@ func (Preferences) Get(q sqlx.Ext) (*domain.PreferencesRecord, error) {
 // Upsert creates the singleton preferences row or replaces its values.
 func (Preferences) Upsert(q sqlx.Ext, preferences domain.PreferencesRecord) error {
 	return exec(q, hereduck.D(`
-		INSERT INTO preferences (id, currency, currency_conversion_mode)
-		VALUES (1, :currency, :currency_conversion_mode)
+		INSERT INTO preferences (id, currency)
+		VALUES (1, :currency)
 		ON CONFLICT (id) DO UPDATE
-		   SET currency = excluded.currency,
-		       currency_conversion_mode = excluded.currency_conversion_mode
+		   SET currency = excluded.currency
 	`), preferences)
 }

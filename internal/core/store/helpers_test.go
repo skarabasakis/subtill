@@ -18,10 +18,7 @@ func ptr[T any](v T) *T { return &v }
 func newDB(t *testing.T) *sqlx.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "subtill.db")
-	require.NoError(t, database.Create(path, domain.Preferences{
-		Currency:               ptr("EUR"),
-		CurrencyConversionMode: ptr(domain.CurrencyConversionModeApproximate),
-	}))
+	require.NoError(t, database.Create(path, domain.Preferences{Currency: ptr("EUR")}))
 	db, closeDB, err := database.Open(path, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, closeDB()) })
@@ -70,7 +67,6 @@ func billingPeriod(id, subscriptionID, startOn, endOn string) domain.BillingPeri
 		Frequency:       1,
 		BillingCurrency: "USD",
 		BillingCost:     "10.00",
-		Cost:            "9.20",
 	}
 	if endOn != "" {
 		record.EndOn = ptr(date(endOn))

@@ -144,46 +144,26 @@ Client tests run against an `httptest.Server` injected with `WithBaseURL`, with 
 
 This service wraps the Frankfurter API and the exchange_rates database repository to provide a simple interface for fetching and persisting exchange rates. It is oriented around bulk exchange rate retrieval, i.e. fetching the exchange rate for a bunch of dates at once.
 
-The service is intended to be called in live mode only, never in approximate mode.
-
 ### Rates are illustrative
 
 Converted amounts are illustrative, not fit for accounting. Frankfurter cannot tell whether a published rate is final: providers publish at different times of day, may skip days that are holidays for them but not for others, and may publish with a delay of several days. So the app never tries to decide whether a rate is final:
 
 - The cache stores whatever Frankfurter returns, and a cached rate is never refreshed. A rate that a provider revises or fills in later stays stale in the cache.
-- Stored costs (`costAuto`, `preferences.set`) are converted with the rate Frankfurter returns at the time of the operation, which may also be revised later.
 
 Refreshing cached rates is out of scope for now.
 
 The service is also intended to be called outside of existing transactions, i.e. after a list of billing periods has been retrieved and the respective payments have been calculated.
 
-In practice, only live-mode payment derivation (`payment.list`, `payment.total`, and the derived cost fields of subscriptions) calls it. Conversions that run in either mode do not:
-
-- `currency.convert` and `costAuto` (on `subscription.start`, `subscription.edit`, `billingPeriod.add`, `billingPeriod.edit`) fetch their single rate with the Frankfurter client (`FetchRateOn` for a past `exchangeOn`, `FetchRate` for today) and convert with the Currency Service. Whether `exchangeOn` is past or today is decided by the operation with the local date; the Exchange Rate Service has no clock. They neither read nor write `exchange_rates`. The fetch happens before the operation's transaction begins, so no HTTP request runs while the write lock is held.
-- `preferences.set` uses the same approach for the recalculation of stored costs (see [Changing the preferred currency](#changing-the-preferred-currency)).
+In practice, every payment and subscription derivation (`payment.list`, `payment.total`, and the derived cost fields of `subscription.list`, `subscription.get` and `subscription.getByName`) calls it. `currency.convert` does not: it fetches its single rate with the Frankfurter client (`FetchRateOn` for a past `exchangeOn`, `FetchRate` for today) and converts with the Currency Service. Whether `exchangeOn` is past or today is decided by the operation with the local date; the Exchange Rate Service has no clock. It neither reads nor writes `exchange_rates`. Write operations never convert, so they never call the Frankfurter client or the service.
 
 ### Quote currency
 
 Every row in `exchange_rates` stores its currency pair: `base_currency`, the currency converted from, and `quote_currency`, the currency converted to. Rows are keyed by `(base_currency, quote_currency, exchange_on)`, so rates quoted in different currencies never collide and a read only ever returns rates in the quote currency it asked for. The service API takes both currencies, `baseCurrency` and `quoteCurrency`, and never reads `preferences`.
 
-- **Where it comes from.** The caller passes the preferred currency as `quoteCurrency`, taken from the same `preferences` read that told it the conversion mode is live. Because `preferences` is read only once, the conversion mode, the quote currency of the returned rates and the currency the caller labels the converted amounts with always agree, even if another process changes `preferences.currency` during the call. The service uses `quoteCurrency` for `store.ExchangeRates.List` and for every record it upserts.
+- **Where it comes from.** The caller passes the preferred currency as `quoteCurrency`, taken from a single `preferences` read. Because `preferences` is read only once, the quote currency of the returned rates and the currency the caller labels the converted amounts with always agree, even if another process changes `preferences.currency` during the call. The service uses `quoteCurrency` for `store.ExchangeRates.List` and for every record it upserts.
 - **Rate direction.** A rate is the number of units of `quoteCurrency` per 1 unit of `baseCurrency`, as in the [subscription derived fields ADR](20261018-subscription-derived-fields.md) and `CurrencyConvertResponse.Rate`. It is fetched from Frankfurter with `base=baseCurrency` and `quote=quoteCurrency`, and a converted amount is `amount × rate`.
 - **No write guard.** If `preferences.currency` changes while a call runs, the call still returns and caches rates quoted in the `quoteCurrency` it was given. They are correct for that pair; they are simply not used until that currency is preferred again.
-- **No invalidation.** Changing `preferences.currency` leaves cached rates in place. Reads in the new preferred currency don't see rates quoted in the old one, and switching back reuses them. Changing `preferences.currency_conversion_mode` does not touch the cache either.
-
-### Changing the preferred currency
-
-`preferences.set` with a new `currency` runs in two phases, so that network latency never extends the write transaction. The main pool takes the write lock at `BEGIN` (`_txlock=immediate`), and other processes wait for it for at most `busy_timeout` (5s), which is shorter than one Frankfurter request may take (10s).
-
-1. **Fetch, outside any transaction.**
-   - List the billing periods, and collect for each the pair (`billing_currency`, exchange date) that its stored `cost` is converted at. The exchange date is the one `costAuto` uses: the minimum of `start_on` and today. Skip periods whose `billing_currency` is the new preferred currency.
-   - Fetch the rate of each distinct pair from the Frankfurter client with `quote` set to the new preferred currency, the same way `costAuto` does: `FetchRateOn` for an exchange date before today, `FetchRate` for today. The exchange date is never after today.
-   - Keep the rates in memory only; they are not cached. The cache is never cleared, so rates in the new preferred currency are fetched and cached lazily by later conversions. A rate that cannot be fetched, including a rate-limited request (one request is made per distinct pair), fails the operation with `exchange_rate_unavailable` before anything is written.
-2. **Write, in one transaction.**
-   1. Upsert the new preferences.
-   2. List the billing periods again, and set each `cost` to `Convert(billing_cost, billing_currency, preferred, rate)` with the rate from phase 1, or `billing_cost` unchanged when `billing_currency` is the new preferred currency.
-
-If phase 2 finds a billing period whose pair was not fetched in phase 1 (another process added or edited a billing period in between), it rolls back, and the operation retries both phases, fetching every pair again. The retry is bounded; when retries are exhausted, it fails with `exchange_rate_unavailable` and nothing is written.
+- **No invalidation.** Changing `preferences.currency` leaves cached rates in place. Reads in the new preferred currency don't see rates quoted in the old one, and switching back reuses them. Rates in a newly preferred currency are fetched and cached lazily by later conversions.
 
 ### Construction
 
@@ -261,3 +241,7 @@ Public methods:
 3. In both cases, it rounds the result using the default rounding of govalues/decimal (half to even, aka bankers' rounding) to the scale of the quote currency: `CurrencyByCode(quoteCurrency).Scale`.
 
 Rounding also applies when the currencies match, so every converted amount has the scale of its currency whether or not a rate was used. For example, `9.999` EUR to EUR gives `10.00`.
+
+## Open questions
+
+- **Uncached today and future rates.** Every subscription read converts at today (`nextChargeCost`, and `cost` of a scheduled billing period), and projected payments convert at future dates. These dates are usually after the coverage `end_date`, so they are unpublished and never cached (step 5). As a result, any read that involves a billing currency other than the preferred currency calls `FetchCoverage` and `FetchRates`, even when every published rate it needs is cached. Such reads depend on the network, use up the rate limit, and fail with `exchange_rate_unavailable` when offline. Options include caching the rate resolved for an unpublished date for a limited time, or falling back to the latest cached rate for the pair. Neither is decided yet.

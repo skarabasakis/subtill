@@ -27,12 +27,11 @@ func TestCreate(t *testing.T) {
 		assert.False(t, dirty)
 
 		db := rawDB(t, path)
-		var currency, mode, journalMode string
-		require.NoError(t, db.QueryRow(`SELECT currency, currency_conversion_mode FROM preferences WHERE id = 1`).Scan(&currency, &mode))
+		var currency, journalMode string
+		require.NoError(t, db.QueryRow(`SELECT currency FROM preferences WHERE id = 1`).Scan(&currency))
 		require.NoError(t, db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode))
 		require.NoError(t, db.Close())
 		assert.Equal(t, "EUR", currency)
-		assert.Equal(t, "live", mode)
 		assert.Equal(t, "wal", journalMode)
 
 		if runtime.GOOS != "windows" {
@@ -54,9 +53,7 @@ func TestCreate(t *testing.T) {
 		t.Setenv("LANG", "ja_JP.UTF-8")
 		path := filepath.Join(t.TempDir(), "subtill.db")
 
-		err := database.Create(path, domain.Preferences{
-			CurrencyConversionMode: ptr(domain.CurrencyConversionModeLive),
-		})
+		err := database.Create(path, domain.Preferences{})
 
 		require.NoError(t, err)
 		db, closeDB, err := database.Open(path, false)
@@ -64,10 +61,7 @@ func TestCreate(t *testing.T) {
 		defer func() { require.NoError(t, closeDB()) }()
 		info, err := database.Info(db)
 		require.NoError(t, err)
-		assert.Equal(t, domain.PreferencesRecord{
-			Currency:               "JPY",
-			CurrencyConversionMode: domain.CurrencyConversionModeLive,
-		}, info.Preferences)
+		assert.Equal(t, domain.PreferencesRecord{Currency: "JPY"}, info.Preferences)
 	})
 
 	t.Run("creates file at literal path when name has URI characters", func(t *testing.T) {

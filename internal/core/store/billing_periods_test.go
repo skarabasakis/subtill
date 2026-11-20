@@ -84,7 +84,7 @@ func TestBillingPeriods(t *testing.T) {
 			insertBillingPeriod(t, db, "b1", "01", "2026-01-01", "2026-07-01")
 			updated := domain.BillingPeriodRecord{
 				ID: "b1", SubscriptionID: "01", StartOn: date("2026-02-01"), Frequency: 12,
-				BillingCurrency: "GBP", BillingCost: "100.00", Cost: "115.00",
+				BillingCurrency: "GBP", BillingCost: "100.00",
 			}
 
 			affected, err := billingPeriods.Update(db, updated)
@@ -100,32 +100,6 @@ func TestBillingPeriods(t *testing.T) {
 			db := newDB(t)
 
 			affected, err := billingPeriods.Update(db, billingPeriod("missing", "01", "2026-01-01", ""))
-
-			require.NoError(t, err)
-			assert.Zero(t, affected)
-		})
-	})
-
-	t.Run("UpdateCostById", func(t *testing.T) {
-		t.Run("changes only cost when updating cost", func(t *testing.T) {
-			db := newDB(t)
-			insertSubscription(t, db, "01", "Netflix")
-			record := insertBillingPeriod(t, db, "b1", "01", "2026-01-01", "")
-
-			affected, err := billingPeriods.UpdateCostById(db, "b1", "11.50")
-
-			require.NoError(t, err)
-			assert.EqualValues(t, 1, affected)
-			record.Cost = "11.50"
-			got, err := billingPeriods.GetById(db, "b1")
-			require.NoError(t, err)
-			assert.Equal(t, &record, got)
-		})
-
-		t.Run("reports zero rows when period is missing", func(t *testing.T) {
-			db := newDB(t)
-
-			affected, err := billingPeriods.UpdateCostById(db, "missing", "1.00")
 
 			require.NoError(t, err)
 			assert.Zero(t, affected)

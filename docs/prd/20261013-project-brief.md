@@ -72,7 +72,6 @@ A subscription has at least one cycle and can have multiple, strictly non-overla
 - `cost`: Required. The cost of the subscription, in the subscription's currency, which can be different from the database's default currency.
   - `currency`: the currency of the subscription cost, e.g. USD, EUR, GBP, etc.
   - `amount`: (decimal) the amount of the subscription cost, e.g. 14.00
-- `approximate_exchanged_amount`: (decimal) The approximate cost amount for the cycle, in the database's default currency. Required. Equals amount if cost currency matches the database's default currency. Otherwise, calculated from exchange rates retrieved from online sources at the moment the cycle is added or its amount is edited.
 - `starts_on`: the date the subscription was charged and the cycle started, e.g. 2021-01-01
 - `ends_on`: the date the cycle ends, exclusive (no charge occurs on it). It can be null if the subscription is ongoing. Fixed-term and cancelled subscriptions are not distinguished: both expire on `ends_on`. `ends_on` need not fall on a charge date; a cycle ending mid-period is equivalent to one ending at the end of that period (e.g. a monthly cycle Jan 1 - Jan 29 is equivalent to Jan 1 - Feb 1). Two cycles are consecutive when the first cycle's `ends_on` equals the second cycle's `starts_on`.
 
@@ -86,17 +85,15 @@ A subscription can be associated with one or more reminders, which are triggered
 
 The user can set database-scoped preferences, such as database display name (label only; the file path is chosen separately), default currency, and preferred time of day to receive notifications (integer hour 0-23, default 7).
 
-When converting to the default currency for payments and totals, a database-scoped preference chooses **live exchange rate** (use the exchange rate for each payment date) or **approximate exchange rate** (use each cycle's stored `approximate_exchanged_amount`). `approximate_exchanged_amount` is always stored on each cycle. With **approximate exchange rate**, payments and totals use those stored amounts only. With **live exchange rate**, they use rates from the `exchange_rates` table, fetched from online sources and cached when missing. The `exchange_rates` table is used and populated only when the preference is **live exchange rate**. An exchange rate has the following attributes:
-- `currency`: the base currency of the exchange rate, e.g. USD, EUR, GBP, etc.
-- `rate`: (decimal) the exchange rate, e.g. 1.12 units of the default currency per 1 unit of currency
+Amounts in the default currency are never stored. Payments, totals and the default-currency costs of subscriptions are converted from each cycle's cost, using the exchange rate for each payment date. Rates come from the `exchange_rates` table, fetched from online sources and cached when missing. When a needed rate can't be obtained, the read fails instead of showing an incomplete amount. An exchange rate has the following attributes:
+- `base_currency`: the currency converted from, e.g. USD, EUR, GBP, etc.
+- `quote_currency`: the currency converted to, i.e. the default currency at the time the rate was fetched
+- `rate`: (decimal) the exchange rate, e.g. 1.12 units of the quote currency per 1 unit of the base currency
 - `date`: Scopes the exchange rate to a specific date.
 
-(`currency`, `date`) is unique.
+(`base_currency`, `quote_currency`, `date`) is unique.
 
-Converted amounts (`approximate_exchanged_amount`, `rate`) do not record the currency they are denominated in, by design: they are always in the current default currency.
-If the default currency changes, `approximate_exchanged_amount` is recalculated for all cycles.
-In addition, if the default currency changes and the preference is **live exchange rate**, the exchange rates table is truncated and repopulated for the new default currency.
-These recalculations, truncations and repopulations run atomically in a single transaction, so converted columns never mix currencies.
+If the default currency changes, nothing is recalculated and the exchange rates table is not truncated: since rates are keyed by currency pair, rates quoted in the previous default currency stay valid and are reused if it is selected again. Rates for the new default currency are fetched lazily, when they are first needed.
 Exchange rates are fetched from online sources.
 
 As `subtill` evolves, the data model may be extended to support more features. This introduces a need to version the database schema. The database schema is versioned using the `golang-migrate/migrate` package.
@@ -108,7 +105,7 @@ As `subtill` evolves, the data model may be extended to support more features. T
 The core features of `subtill` are:
 
 - Track subscriptions: Add a new subscription, Cancel a subscription, Renew a subscription, List, Edit, Delete subscriptions and cycles, Search, sort and filter subscriptions by name, group, tags, extrapolated current monthly/yearly/lifetime cost, start date, end date, lifetime duration (i.e. number of months subscribed across all cycles)
-- Payments: List all payments for a subscription. Payments are derived from subscription cycles (`starts_on` may be any day of the month; each charge falls on that same day every `frequency` months, computed from `starts_on`; in shorter months the day is clamped to the last day of the month and clamps back afterwards, e.g. Jan 31 → Feb 28 → Mar 31) and the active exchange-rate preference, not stored in the database.
+- Payments: List all payments for a subscription. Payments are derived from subscription cycles (`starts_on` may be any day of the month; each charge falls on that same day every `frequency` months, computed from `starts_on`; in shorter months the day is clamped to the last day of the month and clamps back afterwards, e.g. Jan 31 → Feb 28 → Mar 31) and the exchange rates, not stored in the database.
 - Reports (desktop GUI only): Total cost of specific subscriptions, subscription groups or all subscriptions since a specific date or for all time; lifetime totals; cost by month (past or future). Built client-side from `list`, `payments`, and `total`.
 - Reminders: Set reminders for cancelling or renewing a subscription; list current and upcoming reminders in the desktop GUI; OS notifications when a reminder is due. Snooze updates the reminder's date and resets `notification_sent` to false; marking complete deletes the reminder.
 

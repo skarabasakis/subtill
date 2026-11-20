@@ -16,8 +16,7 @@ const FallbackCurrency = "USD"
 // DefaultPreferences returns the preferences of a new database.
 func DefaultPreferences() domain.PreferencesRecord {
 	return domain.PreferencesRecord{
-		Currency:               Currency(),
-		CurrencyConversionMode: domain.CurrencyConversionModeApproximate,
+		Currency: Currency(),
 	}
 }
 

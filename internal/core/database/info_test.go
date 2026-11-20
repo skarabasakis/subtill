@@ -22,10 +22,7 @@ func TestInfo(t *testing.T) {
 		assert.Equal(t, &database.DBInfo{
 			SchemaVersion:     database.SchemaVersion,
 			SubscriptionCount: 0,
-			Preferences: domain.PreferencesRecord{
-				Currency:               "EUR",
-				CurrencyConversionMode: domain.CurrencyConversionModeLive,
-			},
+			Preferences:       domain.PreferencesRecord{Currency: "EUR"},
 		}, info)
 	})
 

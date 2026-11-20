@@ -19,9 +19,7 @@ func TestPreferences(t *testing.T) {
 			got, err := preferences.Get(db)
 
 			require.NoError(t, err)
-			assert.Equal(t, &domain.PreferencesRecord{
-				Currency: "EUR", CurrencyConversionMode: domain.CurrencyConversionModeApproximate,
-			}, got)
+			assert.Equal(t, &domain.PreferencesRecord{Currency: "EUR"}, got)
 		})
 
 		t.Run("returns ErrNotFound when preferences row is missing", func(t *testing.T) {
@@ -38,7 +36,7 @@ func TestPreferences(t *testing.T) {
 	t.Run("Upsert", func(t *testing.T) {
 		t.Run("replaces values when preferences row exists", func(t *testing.T) {
 			db := newDB(t)
-			updated := domain.PreferencesRecord{Currency: "GBP", CurrencyConversionMode: domain.CurrencyConversionModeLive}
+			updated := domain.PreferencesRecord{Currency: "GBP"}
 
 			err := preferences.Upsert(db, updated)
 

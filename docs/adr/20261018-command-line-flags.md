@@ -99,9 +99,9 @@ Calendar dates use `YYYY-MM-DD`. Decimal amounts are passed as strings (same val
 ### Conventions
 
 - **List and aggregate reads** (`list`, `payments`, `total`, `reminders`) build the operation’s `filter` and `sort` objects from list filter flags and `--sort` / `--sort-asc` / `--sort-desc` (see [list filter flags](#list-filter-flags) below). Cmd flags are **per subcommand** (for example `--name` on `list` sets `filter.name`; on `get` it selects lookup-by-name).
-- **Patch-style writes** (`edit`, `billing-period-edit`, `set`) only send fields for flags that appear on the command line. Omitted flags are omitted from the request (unchanged in the service). Use `--clear-<field>` only for **nullable** string columns in [db-schema](./20261018-db-schema.md) (`group`, `notes`, `icon`, `url` on `edit`). Also use `--clear-tags` (remove all tags) and `--clear-end-on` on `billing-period-edit` where the operation allows null/empty semantics. On `edit`, when tag flags are combined, apply in order: `--tag` / `--clear-tags` (full replace), then `--remove-tag`, then `--add-tag`.
+- **Patch-style writes** (`edit`, `billing-period-edit`) only send fields for flags that appear on the command line. Omitted flags are omitted from the request (unchanged in the service). Use `--clear-<field>` only for **nullable** string columns in [db-schema](./20261018-db-schema.md) (`group`, `notes`, `icon`, `url` on `edit`). Also use `--clear-tags` (remove all tags) and `--clear-end-on` on `billing-period-edit` where the operation allows null/empty semantics. On `edit`, when tag flags are combined, apply in order: `--tag` / `--clear-tags` (full replace), then `--remove-tag`, then `--add-tag`.
 - **Boolean fields:** For flags that default to **false**, document only `--<name>` (opt-in). Omitting the flag is false; do not document `--no-<name>`. For flags that default to **true**, or patch commands where the CLI must send **false** explicitly, document `--no-<name>` (and `--<name>` when needed). On patch writes, omitting a boolean flag leaves the request field unset (unchanged); passing `--<name>` sets true in the request.
-- **Auto flags** (`--icon-auto`, `--cost-auto`) are mutually exclusive with their manual counterparts (`--icon` / `--clear-icon`, `--cost`). `--cost-auto` requires `--billing-cost`.
+- **Auto flags:** `--icon-auto` is mutually exclusive with its manual counterparts (`--icon` / `--clear-icon`).
 
 ### List filter flags
 
@@ -187,10 +187,8 @@ Exactly one of:
 - `--start-on` — defaults to today when omitted
 - `--frequency` (required) — positive integer (months)
 - `--duration` — non-negative integer, multiple of `--frequency`; `0` means ongoing
-- `--billing-currency` — required with `--billing-cost` when either is set
-- `--billing-cost` — required with `--billing-currency` when either is set
-- `--cost` — required unless `--cost-auto`; preferred-currency amount (from `currency-convert` when converting manually); not with `--cost-auto`
-- `--cost-auto` — convert `--billing-cost` to preferred currency; requires `--billing-cost`; not with `--cost`
+- `--billing-currency` — defaults to the preferred currency when omitted
+- `--billing-cost` (required)
 
 ### `edit` (`subscription.edit`)
 
@@ -215,8 +213,6 @@ Latest billing period:
 - `--frequency` — positive integer
 - `--billing-currency` — pair with `--billing-cost` when setting billing amounts
 - `--billing-cost` — pair with `--billing-currency` when setting billing amounts
-- `--cost` — not with `--cost-auto`
-- `--cost-auto` — convert `--billing-cost` to preferred currency; requires `--billing-cost`; not with `--cost`
 
 ### `cancel` (`subscription.cancel`)
 
@@ -238,10 +234,8 @@ Latest billing period:
 - `--start-on` (required)
 - `--end-on` (required) — must be strictly after `--start-on`
 - `--frequency` (required) — positive integer
-- `--billing-currency` — required with `--billing-cost` when either is set
-- `--billing-cost`
-- `--cost` — required unless `--cost-auto`; not with `--cost-auto`
-- `--cost-auto` — requires `--billing-cost`; not with `--cost`
+- `--billing-currency` — defaults to the preferred currency when omitted
+- `--billing-cost` (required)
 
 ### `billing-period-edit` (`billingPeriod.edit`)
 
@@ -251,8 +245,6 @@ Latest billing period:
 - `--clear-end-on`
 - `--frequency` — positive integer
 - `--billing-currency`, `--billing-cost` — same pairing rules as `edit`
-- `--cost` — not with `--cost-auto`
-- `--cost-auto` — requires `--billing-cost`; not with `--cost`
 
 ### `billing-period-delete` (`billingPeriod.delete`)
 
@@ -292,10 +284,7 @@ No flags.
 
 ### `set` (`preferences.set`)
 
-At least one of:
-
-- `--currency`
-- `--currency-conversion-mode` — `approximate` or `live`
+- `--currency` (required)
 
 ### `icon-fetch` (`icon.fetch`)
 

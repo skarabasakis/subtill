@@ -10,5 +10,4 @@ type BillingPeriodRecord struct {
 	Frequency       int         `json:"frequency"`
 	BillingCurrency string      `json:"billingCurrency"`
 	BillingCost     string      `json:"billingCost"`
-	Cost            string      `json:"cost"`
 }

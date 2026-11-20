@@ -19,7 +19,6 @@ CREATE TABLE billing_periods (
     subscription_id  TEXT    NOT NULL REFERENCES subscriptions (id) ON DELETE CASCADE,
     billing_currency TEXT    NOT NULL,
     billing_cost     TEXT    NOT NULL,
-    cost             TEXT    NOT NULL,
     frequency        INTEGER NOT NULL CHECK (frequency > 0),
     start_on         TEXT    NOT NULL,
     end_on           TEXT,
@@ -44,9 +43,8 @@ CREATE TABLE exchange_rates (
 );
 
 CREATE TABLE preferences (
-    id                       INTEGER PRIMARY KEY CHECK (id = 1),
-    currency                 TEXT    NOT NULL DEFAULT 'USD',
-    currency_conversion_mode TEXT    NOT NULL DEFAULT 'approximate' CHECK (currency_conversion_mode IN ('approximate', 'live'))
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    currency TEXT    NOT NULL DEFAULT 'USD'
 );
 
 CREATE INDEX subscriptions_name_idx ON subscriptions ("name");

@@ -17,7 +17,6 @@ var billingPeriodColumns = []string{
 	"subscription_id",
 	"billing_currency",
 	"billing_cost",
-	"cost",
 	"frequency",
 	"start_on",
 	"end_on",
@@ -33,7 +32,6 @@ type billingPeriodRow struct {
 	SubscriptionID  string  `db:"subscription_id"  json:"subscription_id"`
 	BillingCurrency string  `db:"billing_currency" json:"billing_currency"`
 	BillingCost     string  `db:"billing_cost"     json:"billing_cost"`
-	Cost            string  `db:"cost"             json:"cost"`
 	Frequency       int     `db:"frequency"        json:"frequency"`
 	StartOn         string  `db:"start_on"         json:"start_on"`
 	EndOn           *string `db:"end_on"           json:"end_on"`
@@ -45,7 +43,6 @@ func billingPeriodRowFrom(r domain.BillingPeriodRecord) billingPeriodRow {
 		SubscriptionID:  r.SubscriptionID,
 		BillingCurrency: r.BillingCurrency,
 		BillingCost:     r.BillingCost,
-		Cost:            r.Cost,
 		Frequency:       r.Frequency,
 		StartOn:         r.StartOn.String(),
 		EndOn:           nullableDate(r.EndOn),
@@ -69,7 +66,6 @@ func (r billingPeriodRow) record() (domain.BillingPeriodRecord, error) {
 		Frequency:       r.Frequency,
 		BillingCurrency: r.BillingCurrency,
 		BillingCost:     r.BillingCost,
-		Cost:            r.Cost,
 	}, nil
 }
 
@@ -128,8 +124,8 @@ func (BillingPeriods) GetById(q sqlx.Ext, id string) (*domain.BillingPeriodRecor
 
 func (BillingPeriods) Insert(q sqlx.Ext, billingPeriod domain.BillingPeriodRecord) error {
 	return exec(q, hereduck.D(`
-		INSERT INTO billing_periods (id, subscription_id, billing_currency, billing_cost, cost, frequency, start_on, end_on)
-		VALUES (:id, :subscription_id, :billing_currency, :billing_cost, :cost, :frequency, :start_on, NULLIF(:end_on, ''))
+		INSERT INTO billing_periods (id, subscription_id, billing_currency, billing_cost, frequency, start_on, end_on)
+		VALUES (:id, :subscription_id, :billing_currency, :billing_cost, :frequency, :start_on, NULLIF(:end_on, ''))
 	`), billingPeriodRowFrom(billingPeriod))
 }
 
@@ -138,16 +134,10 @@ func (BillingPeriods) Insert(q sqlx.Ext, billingPeriod domain.BillingPeriodRecor
 func (BillingPeriods) Update(q sqlx.Ext, billingPeriod domain.BillingPeriodRecord) (int64, error) {
 	return execRowsAffected(q, hereduck.D(`
 		UPDATE billing_periods
-		   SET billing_currency = :billing_currency, billing_cost = :billing_cost, cost = :cost,
+		   SET billing_currency = :billing_currency, billing_cost = :billing_cost,
 		       frequency = :frequency, start_on = :start_on, end_on = NULLIF(:end_on, '')
 		 WHERE id = :id
 	`), billingPeriodRowFrom(billingPeriod))
-}
-
-// UpdateCostById updates only the cost in the preferred currency.
-func (BillingPeriods) UpdateCostById(q sqlx.Ext, id, cost string) (int64, error) {
-	return execRowsAffected(q, `UPDATE billing_periods SET cost = :cost WHERE id = :id`,
-		map[string]any{"id": id, "cost": cost})
 }
 
 func (BillingPeriods) DeleteById(q sqlx.Ext, id string) (int64, error) {
