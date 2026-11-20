@@ -39,7 +39,8 @@ CREATE TABLE exchange_rates (
     quote_currency TEXT NOT NULL,
     rate           TEXT NOT NULL,
     exchange_on    TEXT NOT NULL,
-    UNIQUE (base_currency, quote_currency, exchange_on)
+    UNIQUE (base_currency, quote_currency, exchange_on),
+    CHECK (base_currency <> quote_currency)
 );
 
 CREATE TABLE preferences (

@@ -177,5 +177,18 @@ func TestExchangeRates(t *testing.T) {
 			require.NoError(t, err)
 			assert.EqualValues(t, 0, affected)
 		})
+
+		t.Run("fails and saves nothing when any rate has identical currencies", func(t *testing.T) {
+			db := newDB(t)
+			valid := rate("USD", "EUR", "0.92", "2026-02-01")
+			identical := rate("EUR", "EUR", "1", "2026-02-01")
+
+			_, err := exchangeRates.Upsert(db, []domain.ExchangeRateRecord{valid, identical})
+
+			require.Error(t, err)
+			got, err := exchangeRates.List(db, "USD", "EUR", []civil.Date{date("2026-02-01")})
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
 	})
 }
