@@ -125,6 +125,8 @@ Add a new subscription; if it exists and is inactive, start a new cycle; if it i
 
 When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to `name` (after validation, before persist). The request must not include `icon` when `iconAuto` is true.
 
+The response `subscription` is derived after the write is committed, so its converted cost fields follow [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md).
+
 ```go
 type SubscriptionAddRequest struct {
   Name            string    `json:"name"         validate:"required"`
@@ -287,9 +289,9 @@ type PaymentTotalRequest struct {
 }
 
 type PaymentTotalResponse struct {
-  BillingCurrency string `json:"billingCurrency,omitempty"` // set only when every payment shares one billing currency and it differs from the preferred currency
-  BillingCost     string `json:"billingCost,omitempty"`     // sum of `billingCost` in that currency; omitted with `billingCurrency`
-  Cost            string `json:"cost"`                      // total in the database preferred currency
+  BillingCurrency string  `json:"billingCurrency,omitempty"` // set only when every payment shares one billing currency and it differs from the preferred currency
+  BillingCost     string  `json:"billingCost,omitempty"`     // sum of `billingCost` in that currency; omitted with `billingCurrency`
+  Cost            *string `json:"cost"`                      // total in the database preferred currency; null when the cost of any summed payment is null
 }
 ```
 
@@ -422,29 +424,33 @@ The conditions below are **logical** errors checked after request validation suc
 
 #### Cross-cutting
 
-- `exchange_rate_unavailable` — A conversion to the preferred currency needs an exchange rate and it cannot be obtained for the requested date: `currency.convert` fetches it from the exchange rate provider; the derived cost fields of subscriptions and payments read it from the cache, or fetch it from the provider when it is not cached. Write operations never convert, so they never return it.
+Conversions to the preferred currency follow [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md). `currency.convert` fetches its rate from the exchange rate provider; the derived cost fields of subscriptions and payments read it from the cache, or fetch it from the provider when it is not cached.
+
+- `exchange_rate_unavailable` — The provider has no rate for the requested date. Only `currency.convert` returns it; elsewhere, a missing rate makes the affected converted cost fields null.
+- `exchange_rate_provider_unavailable` — A conversion needs a rate that is not cached, and the provider could not be reached or failed transiently (network error, timeout, rate limit, unexpected response). Returned by every operation that converts. For `subscription.start` it is returned after the write is committed, so the subscription may already exist.
 
 Operations not listed below rely on struct validation only (for example `reminder.list`, `preferences.get`, `preferences.set`).
 
 #### subscription.list
 
-- `exchange_rate_unavailable` — A derived cost field of a subscription in the result set needs a rate that cannot be resolved for its date and billing currency.
+- `exchange_rate_provider_unavailable` — A derived cost field of a subscription in the result set needs a rate that is not cached, and the provider failed transiently.
 
 #### subscription.get
 
 - `subscription_not_found` — No subscription exists with the given `id`.
-- `exchange_rate_unavailable` — Same as `subscription.list`, for the returned subscription.
+- `exchange_rate_provider_unavailable` — Same as `subscription.list`, for the returned subscription.
 
 #### subscription.getByName
 
 - `subscription_not_found` — No subscription exists with the given `name` (case-insensitive exact match).
-- `exchange_rate_unavailable` — Same as `subscription.list`, for the returned subscription.
+- `exchange_rate_provider_unavailable` — Same as `subscription.list`, for the returned subscription.
 
 #### subscription.start
 
 - `subscription_name_taken` — The request would create a new subscription, but another subscription already has this `name` (case-insensitive). Restarting an **inactive** subscription with the same name is allowed.
 - `billing_period_not_consecutive` — Ending the current billing period and opening a new one would violate non-overlap or consecutivity (`previous.ends_on` must equal `new.starts_on`).
 - `icon_fetch_failed` — `iconAuto` is true and the favicon could not be resolved for `name` as domain.
+- `exchange_rate_provider_unavailable` — Same as `subscription.list`, for the returned subscription. The write has already been committed.
 
 #### subscription.edit
 
@@ -490,7 +496,7 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 #### payment.list / payment.total
 
-- `exchange_rate_unavailable` — A payment in the result set needs a rate that cannot be resolved for its date and billing currency.
+- `exchange_rate_provider_unavailable` — A payment in the result set needs a rate that is not cached, and the provider failed transiently.
 
 `payment.total` uses the same payment derivation and date window as `payment.list`; errors are identical.
 
@@ -512,7 +518,8 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 #### currency.convert
 
-- `exchange_rate_unavailable` — No rate can be fetched for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today).
+- `exchange_rate_unavailable` — The provider has no rate for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today).
+- `exchange_rate_provider_unavailable` — The provider could not be reached or failed transiently.
 
 ## Shared types
 
@@ -593,22 +600,22 @@ type Subscription struct {
   EndOn                        *time.Date         `json:"endOn"`
   Span                         int                `json:"span"`
   Duration                     int                `json:"duration"`
-  Cost                         string             `json:"cost"`
+  Cost                         *string            `json:"cost"` // converted costs are null when a rate is missing
   Frequency                    int                `json:"frequency"`
   NextPaymentOn                *time.Date         `json:"nextPaymentOn"`
-  MonthlyCost                  string             `json:"monthlyCost"`
-  YearlyCost                   string             `json:"yearlyCost"`
-  SpanCost                     string             `json:"spanCost"`
-  DurationCost                 string             `json:"durationCost"`
-  RemainingCost                string             `json:"remainingCost"`
+  MonthlyCost                  *string            `json:"monthlyCost"`
+  YearlyCost                   *string            `json:"yearlyCost"`
+  SpanCost                     *string            `json:"spanCost"`
+  DurationCost                 *string            `json:"durationCost"`
+  RemainingCost                *string            `json:"remainingCost"`
   LifetimeStartOn              time.Date          `json:"lifetimeStartOn"`
   LifetimeEndOn                *time.Date         `json:"lifetimeEndOn"`
   LifetimeNextPaymentOn        *time.Date         `json:"lifetimeNextPaymentOn"`
   LifetimeSpan                 int                `json:"lifetimeSpan"`
   LifetimeDuration             int                `json:"lifetimeDuration"`
-  LifetimeSpanCost             string             `json:"lifetimeSpanCost"`
-  LifetimeDurationCost         string             `json:"lifetimeDurationCost"`
-  LifetimeRemainingCost        string             `json:"lifetimeRemainingCost"`
+  LifetimeSpanCost             *string            `json:"lifetimeSpanCost"`
+  LifetimeDurationCost         *string            `json:"lifetimeDurationCost"`
+  LifetimeRemainingCost        *string            `json:"lifetimeRemainingCost"`
   BillingCurrency              string             `json:"billingCurrency"`
   BillingCost                  string             `json:"billingCost"`
   MonthlyBillingCost           string             `json:"monthlyBillingCost"`
@@ -639,12 +646,12 @@ type BillingPeriod struct {
   DurationPaymentCount int                `json:"durationPaymentCount"`
   Span                 int                `json:"span"`
   Duration             int                `json:"duration"`
-  NextChargeCost       string             `json:"nextChargeCost"`
-  MonthlyCost          string             `json:"monthlyCost"`
-  YearlyCost           string             `json:"yearlyCost"`
-  SpanCost             string             `json:"spanCost"`
-  DurationCost         string             `json:"durationCost"`
-  RemainingCost        string             `json:"remainingCost"`
+  NextChargeCost       *string            `json:"nextChargeCost"` // converted costs are null when a rate is missing
+  MonthlyCost          *string            `json:"monthlyCost"`
+  YearlyCost           *string            `json:"yearlyCost"`
+  SpanCost             *string            `json:"spanCost"`
+  DurationCost         *string            `json:"durationCost"`
+  RemainingCost        *string            `json:"remainingCost"`
   MonthlyBillingCost   string             `json:"monthlyBillingCost"`
   YearlyBillingCost    string             `json:"yearlyBillingCost"`
   SpanBillingCost      string             `json:"spanBillingCost"`
@@ -665,7 +672,7 @@ type Payment struct {
   BillingPeriodID  string    `json:"billingPeriodId"`
   BillingCurrency  string    `json:"billingCurrency"`
   BillingCost      string    `json:"billingCost"`
-  Cost             string    `json:"cost"` // in the database default currency, converted at the exchange rate of the payment date
+  Cost             *string   `json:"cost"` // in the database default currency, converted at the latest rate published on or before the payment date; null when that rate is missing
 }
 ```
 
@@ -833,6 +840,7 @@ type ReminderFilters struct {
 - Initializing the database is not an operation, since it is not exposed through the API or MCP.
 - Reminder notifications (OS notifications when a reminder is due, and tracking whether they have been sent) are a feature of the desktop application. They are not exposed through the api, mcp or cmd.
 - Not all subscription fields are sortable; only the fields listed in `SubscriptionSortFields` are. For example, subscriptions can't be sorted by group or tags.
+- Converted cost fields (`cost`, `monthlyCost`, `yearlyCost`, `spanCost`, `durationCost`, `remainingCost` and their `lifetime*` variants) are null when a rate is missing (see [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md)). A filter on one of them leaves out subscriptions where that field is null. A sort on one of them puts nulls last, whichever direction is requested.
 - `SubscriptionFilters.subscriptionTermStatus` omitted or empty matches every subscription. `openended` and `fixed` keep only subscriptions with that `SubscriptionTermStatus`. The empty string is the zero value and is not a status.
 - By design, `subscription.start` and `subscription.cancel` can't take an explicit end date. They accept a `duration` instead: an integer number of months, a multiple of the billing frequency, starting from zero. The end date is derived from it:
   - `subscription.start`: counted from `startOn`. A duration of 0 starts an ongoing billing period (no end date).

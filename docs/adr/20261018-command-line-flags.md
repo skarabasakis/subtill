@@ -42,6 +42,8 @@ The cmd argument accepts one subcommand per invocation. Each subcommand maps to 
 
 Calendar dates use `YYYY-MM-DD`. Decimal amounts are passed as strings (same validation as the API). Repeat a flag to populate JSON arrays (for example `--tag`).
 
+A converted cost that is null because its exchange rate is missing (see [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md)) is an empty cell in `table` and `csv` output and `null` in `json` output.
+
 ## Subcommands
 
 ### Subscriptions

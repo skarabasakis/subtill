@@ -42,6 +42,8 @@ This document provides definitions for fields that are derived from other fields
 - NextPaymentOn: NextPaymentOn(start_on, end_on, frequency, now).
 
 The cost fields are expressed in the preferred currency. None of them is stored: each is calculated from billing_cost and the exchange rates. A converted amount is billing_cost multiplied by the exchange rate for the chosen date. The rate is the `exchange_rates` value for that billing_currency (base), the preferred currency (quote) and the date: units of the preferred currency per 1 unit of billing_currency. When billing_currency equals the preferred currency, the converted amount is billing_cost and no rate is used.
+
+A converted amount is null when its rate is missing (see [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md)). Nulls propagate through every cost formula below, in this section and in the consecutive billing period and subscription sections: a sum, product or division with a null operand is null, and a null is never skipped or treated as 0. For example, DurationCost is null when the rate of any of its charge dates is missing, MonthlyCost and YearlyCost are null when nextChargeCost is null, and LifetimeSpanCost is null when the SpanCost of any billing period is null. Billing cost fields need no rate and are never null for this reason.
 - cost: billing_cost converted at the most recent payment date, or at today if the billing period is scheduled.
 - nextChargeCost: billing_cost converted at today.
 - MonthlyCost: the average monthly cost of the billing period, i.e. nextChargeCost / frequency
