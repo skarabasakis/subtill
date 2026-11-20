@@ -119,19 +119,17 @@ func WithBaseURL(u string) Option
 ### Public methods
 
 - `func (c *Client) FetchCurrencies(ctx context.Context) ([]Currency, error)`: `GET {baseURL}/v2/currencies`. `Currency` mirrors the response items: `ISOCode` (`iso_code`), `Name` (`name`), `Symbol` (`symbol`), `Type` (`type`: `currency` or `crypto`).
-- `func (c *Client) FetchRate(ctx context.Context, baseCurrency, quoteCurrency string) (decimal.Decimal, error)`: `GET {baseURL}/v2/rate/{base}/{quote}` (Today's rate)
-- `func (c *Client) FetchRateOn(ctx context.Context, baseCurrency, quoteCurrency string, date civil.Date) (decimal.Decimal, error)`: `GET {baseURL}/v2/rate/{base}/{quote}?date={date}`
 - `func (c *Client) FetchRates(ctx context.Context, baseCurrency, quoteCurrency string, from, to civil.Date) (map[civil.Date]decimal.Decimal, error)`: `GET {baseURL}/v2/rates?base={base}&quotes={quote}&from={from}&to={to}`. The map contains only the dates Frankfurter published a rate for. Which dates those are depends on the providers: some publish on business days only, while the default blend may also cover weekends. When `from` itself has no rate, Frankfurter also returns the latest published date before it. A range entirely after the last published date returns an empty map.
 - `func (c *Client) FetchCoverage(ctx context.Context, baseCurrency, quoteCurrency string) (Coverage, error)`: `GET {baseURL}/v2/coverage?base={base}&quotes={quote}`. `Coverage` mirrors the response: `StartDate` (`start_date`) and `EndDate` (`end_date`), the first and last dates a rate is published for the pair.
 
 URLs are built with `url.JoinPath` for path segments and `url.Values` for query strings, never with `fmt.Sprintf`. Dates are formatted with `civil.Date.String()` (`YYYY-MM-DD`). Rates are decoded straight into `decimal.Decimal` and never pass through `float64`.
 
-`baseCurrency` and `quoteCurrency` must differ, because Frankfurter rejects a pair of identical currencies. The client returns `ErrSameCurrency` without making a request. Callers are expected to handle that case before calling the client (see `ExchangeRates` step 0).
+`baseCurrency` and `quoteCurrency` must differ, because Frankfurter rejects a pair of identical currencies. The client returns `ErrSameCurrency` without making a request. Callers are expected to handle that case before calling the client (see `ExchangeRates` step 1).
 
 ### Errors
 
 - `ErrSameCurrency`: base and quote are the same currency.
-- `ErrNotFound`: the response status is 404 (no rate for the pair or date).
+- `ErrNotFound`: the response status is 404 (the pair is not published).
 - `ErrRateLimited`: the response status is 429. The client does not retry.
 - `ErrUnexpectedStatus`: any other non-2xx response. It is wrapped with the status code and the request path.
 - Transport, timeout and context errors, and JSON decoding errors, are returned wrapped, so `errors.Is(err, context.DeadlineExceeded)` still works.
@@ -142,7 +140,7 @@ Client tests run against an `httptest.Server` injected with `WithBaseURL`, with 
 
 ## Exchange Rate Service
 
-This service wraps the Frankfurter API and the exchange_rates database repository to provide a simple interface for fetching and persisting exchange rates. It is oriented around bulk exchange rate retrieval, i.e. fetching the exchange rate for a bunch of dates at once.
+This service wraps the Frankfurter API to provide a simple interface for fetching exchange rates. Reading and persisting them in the `exchange_rates` cache are each optional: the caller passes the cache functions to use (see [Cache](#cache)). It is oriented around bulk exchange rate retrieval, i.e. fetching the exchange rate for a bunch of dates at once.
 
 ### Rates are illustrative
 
@@ -154,13 +152,13 @@ Refreshing cached rates is out of scope for now.
 
 The service is also intended to be called outside of existing transactions, i.e. after a list of billing periods has been retrieved and the respective payments have been calculated.
 
-In practice, every payment and subscription derivation (`payment.list`, `payment.total`, and the derived cost fields of `subscription.list`, `subscription.get`, `subscription.getByName` and the `subscription.start` response) calls it. `subscription.start` calls it after its write is committed. `currency.convert` does not: it fetches its single rate with the Frankfurter client (`FetchRateOn` for a past `exchangeOn`, `FetchRate` for today) and converts with the Currency Service. Whether `exchangeOn` is past or today is decided by the operation with the local date; the Exchange Rate Service has no clock. It neither reads nor writes `exchange_rates`. The other write operations return no derived costs, so they never call the Frankfurter client or the service.
+In practice, every payment and subscription derivation (`payment.list`, `payment.total`, and the derived cost fields of `subscription.list`, `subscription.get`, `subscription.getByName` and the `subscription.start` response) calls it with `DatabaseCache`, so the cache is both read and updated. `subscription.start` calls it after its write is committed. `currency.convert` calls `ExchangeRate` with `NoCache`, so it neither reads nor writes `exchange_rates`, and converts with the Currency Service. It maps `ErrRateUnavailable` to `exchange_rate_unavailable` and `ErrRateProviderUnavailable` to `exchange_rate_provider_unavailable`. The other write operations return no derived costs, so they never call the Frankfurter client or the service.
 
 ### Quote currency
 
-Every row in `exchange_rates` stores its currency pair: `base_currency`, the currency converted from, and `quote_currency`, the currency converted to. Rows are keyed by `(base_currency, quote_currency, exchange_on)`, so rates quoted in different currencies never collide and a read only ever returns rates in the quote currency it asked for. The service API takes both currencies, `baseCurrency` and `quoteCurrency`, and never reads `preferences`.
+Every row in `exchange_rates` stores its currency pair: `base_currency`, the currency converted from, and `quote_currency`, the currency converted to. Rows are keyed by `(base_currency, quote_currency, exchange_on)`, so rates quoted in different currencies never collide and a read only ever returns rates in the quote currency it asked for. A `CHECK (base_currency <> quote_currency)` constraint rejects rows with identical currencies. It is a backstop: the service never produces such rows, because it returns the rate between identical currencies before using the cache (step 1). The service API takes both currencies, `baseCurrency` and `quoteCurrency`, and never reads `preferences`.
 
-- **Where it comes from.** The caller passes the preferred currency as `quoteCurrency`, taken from a single `preferences` read. Because `preferences` is read only once, the quote currency of the returned rates and the currency the caller labels the converted amounts with always agree, even if another process changes `preferences.currency` during the call. The service uses `quoteCurrency` for `store.ExchangeRates.List` and for every record it upserts.
+- **Where it comes from.** The caller passes the preferred currency as `quoteCurrency`, taken from a single `preferences` read. Because `preferences` is read only once, the quote currency of the returned rates and the currency the caller labels the converted amounts with always agree, even if another process changes `preferences.currency` during the call. The service passes `quoteCurrency` to the cache functions, which use it for `store.ExchangeRates.List` and for every record they upsert.
 - **Rate direction.** A rate is the number of units of `quoteCurrency` per 1 unit of `baseCurrency`, as in the [subscription derived fields ADR](20261018-subscription-derived-fields.md) and `CurrencyConvertResponse.Rate`. It is fetched from Frankfurter with `base=baseCurrency` and `quote=quoteCurrency`, and a converted amount is `amount × rate`.
 - **No write guard.** If `preferences.currency` changes while a call runs, the call still returns and caches rates quoted in the `quoteCurrency` it was given. They are correct for that pair; they are simply not used until that currency is preferred again.
 - **No invalidation.** Changing `preferences.currency` leaves cached rates in place. Reads in the new preferred currency don't see rates quoted in the old one, and switching back reuses them. Rates in a newly preferred currency are fetched and cached lazily by later conversions.
@@ -183,33 +181,56 @@ func NewExchangeRateService(client RateFetcher) *ExchangeRateService
 ```
 
 - `RateFetcher` is defined by the service, not by the `frankfurter` package, and lists only the methods the service calls. `*frankfurter.Client` satisfies it.
-- The service has no clock. The cutoff between published and unpublished dates is the coverage `end_date` reported by Frankfurter (step 2), not the local date, which would be wrong in timezones ahead of the providers and before they publish.
-- The struct holds no database handle, no state between calls, and does not read `preferences`: the quote currency is an argument (see [Quote currency](#quote-currency)). The database is passed to each call as `q sqlx.Ext`, like every `store` method, so the caller decides whether the service runs on the pool or inside a transaction.
+- The service has no clock. The cutoff between published and unpublished dates is the coverage `end_date` reported by Frankfurter (step 3), not the local date, which would be wrong in timezones ahead of the providers and before they publish.
+- The struct holds no database handle, no state between calls, and does not read `preferences`: the quote currency is an argument (see [Quote currency](#quote-currency)). The service itself never touches the database. The caller passes the [cache functions](#cache) to each call. They are bound to the database, given as `q sqlx.Ext` like every `store` method, so the caller decides whether the cache is used, and whether on the pool or inside a transaction.
 
 ### Public methods
 
-- `func (s *ExchangeRateService) ExchangeRate(ctx context.Context, q sqlx.Ext, baseCurrency, quoteCurrency string, date civil.Date) (decimal.Decimal, error)`: convenience wrapper for `s.ExchangeRates(ctx, q, baseCurrency, quoteCurrency, []civil.Date{date})`.
+The caller passes the [cache functions](#cache) to use, grouped in an `ExchangeRateCache`. A step the caller doesn't want is given a no-op function rather than `nil`, so the caller can read the cache, update it, do both, or neither, and `ExchangeRates` runs the same steps in every case, with no branch on which cache functions were passed:
 
-- `func (s *ExchangeRateService) ExchangeRates(ctx context.Context, q sqlx.Ext, baseCurrency, quoteCurrency string, dates []civil.Date) (map[civil.Date]decimal.Decimal, error)`
+```go
+type CacheReader func(baseCurrency, quoteCurrency string, dates []civil.Date) (map[civil.Date]decimal.Decimal, error)
+type CacheWriter func(baseCurrency, quoteCurrency string, rates map[civil.Date]decimal.Decimal) error
 
-`ctx` bounds the Frankfurter requests; a cancelled or expired `ctx` fails the call like any other transient Frankfurter error (step 7). `q` is normally the pool, because the service is called outside transactions (see above). `quoteCurrency` is the preferred currency as read by the caller (see [Quote currency](#quote-currency)).
+type ExchangeRateCache struct {
+    Read  CacheReader
+    Write CacheWriter
+}
+```
 
-0. Deduplicate `dates`. If `baseCurrency` equals `quoteCurrency`, return a rate of 1 for every date, without reading the cache or calling Frankfurter. No row is ever cached with identical base and quote currencies.
-1. Look up the cached rates with `store.ExchangeRates.List(q, baseCurrency, quoteCurrency, dates)`, a single query for all dates. The missing dates are computed from the requested dates and the cached rows with `missingDates`. If there are none, return the cached rates without calling Frankfurter.
-2. Call `FetchCoverage(baseCurrency, quoteCurrency)` and keep its `start_date` and `end_date`, the first and last dates a rate is published for. They split the missing dates into three groups:
+Both fields are required. A zero `ExchangeRateCache`, or one with a `nil` field, is a programming error and panics when the missing function is called; it never means "no cache". Callers use one of the ready-made values from [Cache](#cache) (`DatabaseCache`, `NoCache`) and only build the struct by hand for other combinations, with `NoCacheReader` or `NoCacheWriter` for the step they skip.
+
+Typical call site, with the cache read and updated:
+
+```go
+rates, err := svc.ExchangeRates(ctx, baseCurrency, quoteCurrency, dates, currency.DatabaseCache(db))
+```
+
+The service keeps control of when each cache function runs. It alone knows which rates are published and may be cached (step 6), and it updates the cache even after a Frankfurter call fails (step 7), so neither rule leaks to the caller.
+
+- `func (s *ExchangeRateService) ExchangeRate(ctx context.Context, baseCurrency, quoteCurrency string, date civil.Date, cache ExchangeRateCache) (decimal.Decimal, error)`: convenience wrapper for `s.ExchangeRates(ctx, baseCurrency, quoteCurrency, []civil.Date{date}, cache)`.
+
+- `func (s *ExchangeRateService) ExchangeRates(ctx context.Context, baseCurrency, quoteCurrency string, dates []civil.Date, cache ExchangeRateCache) (map[civil.Date]decimal.Decimal, error)`
+
+`ctx` bounds the Frankfurter requests; a cancelled or expired `ctx` fails the call like any other transient Frankfurter error (step 8). `quoteCurrency` is the preferred currency as read by the caller (see [Quote currency](#quote-currency)). The method never touches the database except through `cache`.
+
+1. Deduplicate `dates`. If `baseCurrency` equals `quoteCurrency`, return a rate of 1 for every date, without calling `cache` or Frankfurter. No row is ever cached with identical base and quote currencies, so the cache functions need no special case for them. Return an empty map when `dates` is empty.
+2. Look up the cached rates with `cache.Read(baseCurrency, quoteCurrency, dates)`, and compute the missing dates from the requested dates and the cached rates with `missingDates`. With `NoCacheReader`, every date is missing. If there are none, return the cached rates without calling Frankfurter. A failed read returns its error without calling Frankfurter.
+3. Call `FetchCoverage(baseCurrency, quoteCurrency)` and keep its `start_date` and `end_date`, the first and last dates a rate is published for. They split the missing dates into three groups:
    - **uncovered dates** (before `start_date`): unavailable, without asking Frankfurter for them;
    - **published dates** (from `start_date` to `end_date`);
    - **unpublished dates** (after `end_date`).
-3. If every missing date is uncovered, skip this step. Otherwise call `FetchRates(baseCurrency, quoteCurrency, from, to)` once for the published and unpublished dates, with `from` = the earlier of `end_date` and the earliest missing date that isn't uncovered, and `to` = the latest missing date. `from` is never before `start_date`, so the request never asks for a range that Frankfurter has no data for, which it might reject instead of answering partially. Including `end_date` in the range guarantees a rate for it in the response, even when every missing date is unpublished. If the response has no rate for `end_date`, Frankfurter broke its own coverage; treat every unpublished date as unavailable. The response covers every published date in the range, so missing dates far apart (for example, one in 2015 and one in 2026) fetch every rate in between. This trade-off is accepted: the range is neither split into clusters nor capped. A decade of daily rates for one pair is only a few thousand entries, one request is simpler than several and uses less of the rate limit, and the requested published dates are cached, so later calls for the same dates make no request.
-4. Resolve each missing date from the response:
+4. If every missing date is uncovered, skip this step. Otherwise call `FetchRates(baseCurrency, quoteCurrency, from, to)` once for the published and unpublished dates, with `from` = the earlier of `end_date` and the earliest missing date that isn't uncovered, and `to` = the latest missing date. `from` is never before `start_date`, so the request never asks for a range that Frankfurter has no data for, which it might reject instead of answering partially. Including `end_date` in the range guarantees a rate for it in the response, even when every missing date is unpublished. If the response has no rate for `end_date`, Frankfurter broke its own coverage; treat every unpublished date as unavailable. The response covers every published date in the range, so missing dates far apart (for example, one in 2015 and one in 2026) fetch every rate in between. This trade-off is accepted: the range is neither split into clusters nor capped. A decade of daily rates for one pair is only a few thousand entries, one request is simpler than several and uses less of the rate limit, and when the caller's cache writes, the requested published dates are cached, so later calls for the same dates make no request.
+5. Resolve each missing date from the response:
    - **Published date**: the rate of the latest date on or before it in the response. That is the date's own rate when one was published, otherwise the rate of the latest date published before it (a weekend or holiday for its providers). Frankfurter includes that earlier date in the response even when it falls before `from`. A published date with no rate on or before it in the response is unavailable: since it is on or after `start_date`, this only happens if Frankfurter broke its own coverage.
    - **Unpublished date**: the rate for `end_date`.
-5. Collect the rates of the published dates for caching, keyed by the requested date, so that a weekend or holiday is found in the cache next time instead of being missing again. Unpublished dates are never cached: their rate will be published later. Published dates are cached even though their rate may still be revised or filled in by a late provider (see [Rates are illustrative](#rates-are-illustrative)).
-6. Cache the collected rates with `store.ExchangeRates.Upsert(q, rates)`, each record with `baseCurrency` as its base currency and `quoteCurrency` as its quote currency. This write is safe outside any transaction, because rows are keyed by quote currency: if the preferred currency has changed since the caller read it, the rates are cached under the old one, where they are still correct (see [Quote currency](#quote-currency)). This step runs even when step 7 returns an error, so a retry needs fewer requests.
-7. Return, in order of precedence:
+6. Collect the rates of the published dates for caching, keyed by the requested date, so that a weekend or holiday is found in the cache next time instead of being missing again. Unpublished dates are never cached: their rate will be published later. Published dates are cached even though their rate may still be revised or filled in by a late provider (see [Rates are illustrative](#rates-are-illustrative)).
+7. Cache the collected rates with `cache.Write(baseCurrency, quoteCurrency, rates)`, even when there are none: an empty write is a no-op for every writer. With `NoCacheWriter`, nothing is written. This step runs even when a Frankfurter call in step 3 or 4 failed, so a retry needs fewer requests. It caches whatever was resolved before the failure, which may be nothing.
+8. Return, in order of precedence:
+   - If the write failed, its error, joined with `errors.Join` to the Frankfurter error described below if any, with no rates. A database error fails the call like any other `store` error, while `ErrRateUnavailable` and `ErrRateProviderUnavailable` stay reachable with `errors.Is`.
    - If a Frankfurter call failed transiently (see Errors), an error wrapping `ErrRateProviderUnavailable` and the cause, with no rates. A rate limit never falls back to the cached rate of another date.
-   - Otherwise, if any date is unavailable (uncovered, `ErrNotFound`, or a response that breaks the reported coverage), the rates resolved for the other dates together with an error wrapping `ErrRateUnavailable`, listing the unavailable dates. Unavailable dates are absent from the map.
-   - Otherwise, the rates for all requested dates.
+   - Otherwise, if any date is unavailable (uncovered, `ErrNotFound`, or a response that breaks the reported coverage), the cached and resolved rates of the other dates together with an error wrapping `ErrRateUnavailable`, listing the unavailable dates. Unavailable dates are absent from the map.
+   - Otherwise, the cached and resolved rates for all requested dates.
 
 Errors (see [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md)):
 
@@ -218,23 +239,56 @@ Errors (see [Handling of unavailable exchange rates](./20261120-unavailable-exch
 
 `ExchangeRate` returns the rate with no error, or a zero rate with the error of either class. Callers check the error and never use the zero rate.
 
+### Cache
+
+Reading and updating the `exchange_rates` cache are each optional. They are public package functions, and the only ones that take a database. They can be called directly, or bound to a database and passed to `ExchangeRates` in an `ExchangeRateCache`, which decides when to call them. `q` is normally the pool, because conversions run outside transactions (see above).
+
+Database access:
+
+- `func CachedExchangeRates(q sqlx.Ext, baseCurrency, quoteCurrency string, dates []civil.Date) (map[civil.Date]decimal.Decimal, error)`: the cached rates with `store.ExchangeRates.List(q, baseCurrency, quoteCurrency, dates)`, a single query for all dates, keyed by `ExchangeOn`. Dates without a cached rate are absent from the map. Rows whose `Rate` fails to parse return an error.
+- `func CacheExchangeRates(q sqlx.Ext, baseCurrency, quoteCurrency string, rates map[civil.Date]decimal.Decimal) error`: upserts `rates` with `store.ExchangeRates.Upsert(q, records)`, each record with `baseCurrency` as its base currency and `quoteCurrency` as its quote currency. An empty `rates` returns without a query, so callers never need to check. It writes whatever it is given: choosing which rates may be cached is up to the caller (`ExchangeRates` step 6). The write is safe outside any transaction, because rows are keyed by quote currency: if the preferred currency has changed since the caller read it, the rates are cached under the old one, where they are still correct (see [Quote currency](#quote-currency)).
+
+Cache functions, for building an `ExchangeRateCache`:
+
+- `func DatabaseCacheReader(q sqlx.Ext) CacheReader` and `func DatabaseCacheWriter(q sqlx.Ext) CacheWriter`: bind `CachedExchangeRates` and `CacheExchangeRates` to `q`.
+- `func NoCacheReader(baseCurrency, quoteCurrency string, dates []civil.Date) (map[civil.Date]decimal.Decimal, error)`: returns an empty map and no error, so every date is missing and fetched.
+- `func NoCacheWriter(baseCurrency, quoteCurrency string, rates map[civil.Date]decimal.Decimal) error`: writes nothing and returns no error.
+
+`NoCacheReader` and `NoCacheWriter` are plain functions with the signatures of `CacheReader` and `CacheWriter`, so they are used as values without being called (null object). They replace `nil`, so `ExchangeRates` never branches on which cache functions it was given.
+
+Ready-made caches:
+
+- `func DatabaseCache(q sqlx.Ext) ExchangeRateCache`: reads and updates the cache, `{DatabaseCacheReader(q), DatabaseCacheWriter(q)}`. Used by every conversion.
+- `var NoCache = ExchangeRateCache{NoCacheReader, NoCacheWriter}`: always fetches and never writes. Used by `currency.convert`.
+
+Read-only and write-only caches have no ready-made value because nothing needs them yet. They are built by hand, as `ExchangeRateCache{DatabaseCacheReader(q), NoCacheWriter}` and `ExchangeRateCache{NoCacheReader, DatabaseCacheWriter(q)}`.
+
+`CacheReader` and `CacheWriter` are function types rather than interfaces, so a test can pass a closure, and a single function such as `NoCacheReader` is usable without a wrapper type.
+
 Private helpers:
 
-- `func missingDates(requested []civil.Date, cached []domain.ExchangeRateRecord) []civil.Date`: the requested dates minus the `ExchangeOn` of the cached records. It is pure: the store read stays in `ExchangeRates`, the composed method, so the helper has a single responsibility and needs no database.
+- `func missingDates(requested []civil.Date, cached map[civil.Date]decimal.Decimal) []civil.Date`: the requested dates without a cached rate. It is pure: the cache read stays in `ExchangeRates`, the composed method, so the helper has a single responsibility and needs no database.
 
 ### Testing
 
-Tests construct the service with a fake `RateFetcher` that reports a fixed coverage `end_date`, and run against a real database like the `store` tests. Besides the happy path, they cover:
+`ExchangeRates` is tested with a fake `RateFetcher` that reports a fixed coverage `end_date`, and with fake cache functions (closures that record their calls and return canned rates and errors), so it needs no database. Besides the happy path, the tests cover:
 
-- **Quote currency isolation**: rates fetched and cached for one `quoteCurrency` are returned only to calls with that `quoteCurrency`; a call with another quote currency for the same base currency and dates misses the cache and fetches its own rates.
+- **Cache read**: Frankfurter is asked only for the dates missing from `cache.Read`, and the cached rates are merged into the result; no Frankfurter call is made when every date is cached; a failed read is returned without calling Frankfurter.
 - **Published vs unpublished split**, with `end_date` pinned:
-  - a date on or before `end_date` with its own rate is cached under that date;
-  - a date on or before `end_date` without its own rate (weekend or holiday) gets the latest earlier rate, cached under the requested date;
-  - a date after `end_date` gets the rate for `end_date` and is not cached;
-  - all missing dates are fetched with a single `FetchRates` call whose range includes `end_date`;
-  - no Frankfurter call is made when every date is cached.
-- **Errors**: a date before the coverage `start_date` yields `ErrRateUnavailable` listing that date, is excluded from the `FetchRates` range, and doesn't prevent the rates of the other dates from being returned and cached; when every missing date is before `start_date`, `FetchRates` is not called; a response without a rate for `end_date` makes the unpublished dates unavailable; an `ErrNotFound` from `FetchCoverage` or `FetchRates` yields `ErrRateUnavailable` wrapping the cause; a transport error, timeout, cancelled `ctx`, `ErrRateLimited` or `ErrUnexpectedStatus` from either call yields `ErrRateProviderUnavailable` wrapping the cause, even when some dates are also unavailable.
-- **Same currency**: when `baseCurrency` equals `quoteCurrency`, every rate is 1, the fake is not called, and nothing is cached.
+  - a date on or before `end_date` with its own rate is passed to `cache.Write` under that date;
+  - a date on or before `end_date` without its own rate (weekend or holiday) gets the latest earlier rate, passed to `cache.Write` under the requested date;
+  - a date after `end_date` gets the rate for `end_date` and is not passed to `cache.Write`;
+  - all missing dates are fetched with a single `FetchRates` call whose range includes `end_date`.
+- **Errors**: a date before the coverage `start_date` yields `ErrRateUnavailable` listing that date, is excluded from the `FetchRates` range, and doesn't prevent the rates of the other dates from being returned and written; when every missing date is before `start_date`, `FetchRates` is not called; a response without a rate for `end_date` makes the unpublished dates unavailable; an `ErrNotFound` from `FetchCoverage` or `FetchRates` yields `ErrRateUnavailable` wrapping the cause; a transport error, timeout, cancelled `ctx`, `ErrRateLimited` or `ErrUnexpectedStatus` from either call yields `ErrRateProviderUnavailable` wrapping the cause, even when some dates are also unavailable, and the rates resolved before the failure are still written; a failed write is joined to the Frankfurter error.
+- **Same currency**: when `baseCurrency` equals `quoteCurrency`, every rate is 1, and neither the fake fetcher nor the cache functions are called.
+
+`CachedExchangeRates` and `CacheExchangeRates` run against a real database like the `store` tests. They cover:
+
+- rates written by `CacheExchangeRates` are returned by `CachedExchangeRates` for the same pair, and dates without a cached rate are absent;
+- an empty `rates` writes nothing and returns no error;
+- **quote currency isolation**: rates cached for one `quoteCurrency` are not returned for another quote currency with the same base currency and dates.
+
+`NoCacheReader` returns an empty map and `NoCacheWriter` returns no error; neither needs a database. `ExchangeRates` is not tested once per ready-made cache: it has no branch on them, so the fake cache functions cover it.
 
 ## Currency Service
 
@@ -250,4 +304,4 @@ Rounding also applies when the currencies match, so every converted amount has t
 
 ## Open questions
 
-- **Uncached today and future rates.** Every subscription read converts at today (`nextChargeCost`, and `cost` of a scheduled billing period), and projected payments convert at future dates. These dates are usually after the coverage `end_date`, so they are unpublished and never cached (step 5). As a result, any read that involves a billing currency other than the preferred currency calls `FetchCoverage` and `FetchRates`, even when every published rate it needs is cached. Such reads depend on the network, use up the rate limit, and fail with `exchange_rate_provider_unavailable` when offline. Options include caching the rate resolved for an unpublished date for a limited time, or falling back to the latest cached rate for the pair. Neither is decided yet.
+- **Uncached today and future rates.** Every subscription read converts at today (`nextChargeCost`, and `cost` of a scheduled billing period), and projected payments convert at future dates. These dates are usually after the coverage `end_date`, so they are unpublished and never cached (step 6). As a result, any read that involves a billing currency other than the preferred currency calls `FetchCoverage` and `FetchRates`, even when every published rate it needs is cached. Such reads depend on the network, use up the rate limit, and fail with `exchange_rate_provider_unavailable` when offline. Options include caching the rate resolved for an unpublished date for a limited time, or falling back to the latest cached rate for the pair. Neither is decided yet.

@@ -418,13 +418,21 @@ type CurrencyConvertResponse struct {
 }
 ```
 
+The rate comes from the [Exchange Rate Service](./20261113-currency-service.md#exchange-rate-service) (`ExchangeRate` with `NoCache`), which fetches it from the provider and neither reads nor writes the exchange rate cache. The rate follows the service's rules:
+
+- When `currency` is the preferred currency, the rate is 1 and the provider is not called.
+- When the provider has published no rate for `exchangeOn` itself (a weekend or holiday), the rate is the latest one published before it.
+- When `exchangeOn` is after the last date the provider has published a rate for (usually today, before the providers publish, or a future date), the rate is the latest published one.
+
+The amount is then converted with the Currency Service and rounded to the scale of the preferred currency.
+
 ### Error Conditions
 
 The conditions below are **logical** errors checked after request validation succeeds. They are returned as explicit, stable error codes (implementations may attach a human-readable message).
 
 #### Cross-cutting
 
-Conversions to the preferred currency follow [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md). `currency.convert` fetches its rate from the exchange rate provider; the derived cost fields of subscriptions and payments read it from the cache, or fetch it from the provider when it is not cached.
+Conversions to the preferred currency follow [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md). `currency.convert` fetches its rate from the exchange rate provider without using the cache; the derived cost fields of subscriptions and payments read it from the cache, or fetch it from the provider when it is not cached.
 
 - `exchange_rate_unavailable` — The provider has no rate for the requested date. Only `currency.convert` returns it; elsewhere, a missing rate makes the affected converted cost fields null.
 - `exchange_rate_provider_unavailable` — A conversion needs a rate that is not cached, and the provider could not be reached or failed transiently (network error, timeout, rate limit, unexpected response). Returned by every operation that converts. For `subscription.start` it is returned after the write is committed, so the subscription may already exist.
@@ -518,8 +526,8 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 #### currency.convert
 
-- `exchange_rate_unavailable` — The provider has no rate for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today).
-- `exchange_rate_provider_unavailable` — The provider could not be reached or failed transiently.
+- `exchange_rate_unavailable` — The provider has no rate for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today): `exchangeOn` is before the first date the provider publishes the pair for, or the provider does not publish the pair. Mapped from the Exchange Rate Service's `ErrRateUnavailable`.
+- `exchange_rate_provider_unavailable` — The provider could not be reached or failed transiently. Mapped from the Exchange Rate Service's `ErrRateProviderUnavailable`.
 
 ## Shared types
 
