@@ -258,7 +258,7 @@ Cache functions, for building an `ExchangeRateCache`:
 
 Ready-made caches:
 
-- `func DatabaseCache(q sqlx.Ext) ExchangeRateCache`: reads and updates the cache, `{DatabaseCacheReader(q), DatabaseCacheWriter(q)}`. Used by every conversion.
+- `func DatabaseCache(q sqlx.Ext) ExchangeRateCache`: reads and updates the cache, `{DatabaseCacheReader(q), DatabaseCacheWriter(q)}`. Used by every payment and subscription derivation.
 - `var NoCache = ExchangeRateCache{NoCacheReader, NoCacheWriter}`: always fetches and never writes. Used by `currency.convert`.
 
 Read-only and write-only caches have no ready-made value because nothing needs them yet. They are built by hand, as `ExchangeRateCache{DatabaseCacheReader(q), NoCacheWriter}` and `ExchangeRateCache{NoCacheReader, DatabaseCacheWriter(q)}`.
@@ -304,4 +304,4 @@ Rounding also applies when the currencies match, so every converted amount has t
 
 ## Open questions
 
-- **Uncached today and future rates.** Every subscription read converts at today (`nextChargeCost`, and `cost` of a scheduled billing period), and projected payments convert at future dates. These dates are usually after the coverage `end_date`, so they are unpublished and never cached (step 6). As a result, any read that involves a billing currency other than the preferred currency calls `FetchCoverage` and `FetchRates`, even when every published rate it needs is cached. Such reads depend on the network, use up the rate limit, and fail with `exchange_rate_provider_unavailable` when offline. Options include caching the rate resolved for an unpublished date for a limited time, or falling back to the latest cached rate for the pair. Neither is decided yet.
+- **Uncached today and future rates.** Every subscription read converts at today (`nextChargeCost`, and `cost` of a scheduled billing period), and projected payments convert at future dates. Future dates are always after the coverage `end_date`. Today is after it until the providers publish its rate, and on days they don't publish (weekends and holidays for the providers of the pair). Such dates are unpublished and never cached (step 6). As a result, a read that involves a billing currency other than the preferred currency calls `FetchCoverage` and `FetchRates` whenever it needs an unpublished date, even when every published rate it needs is cached. Projected payments always need one; `nextChargeCost` needs one only while today is unpublished. Such reads depend on the network, use up the rate limit, and fail with `exchange_rate_provider_unavailable` when offline. Options include caching the rate resolved for an unpublished date for a limited time, or falling back to the latest cached rate for the pair. Neither is decided yet.

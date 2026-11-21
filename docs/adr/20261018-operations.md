@@ -39,8 +39,8 @@ This document provides a list of operations that can be performed on an existing
 
 ### Preferences
 
-- `preferences.get`: get current values of database preferences (e.g. default currency)
-- `preferences.set`: set values of database preferences (e.g. default currency)
+- `preferences.get`: get current values of database preferences (e.g. preferred currency)
+- `preferences.set`: set values of database preferences (e.g. preferred currency)
 
 ### Utilities
 
@@ -281,7 +281,7 @@ type PaymentListResponse struct {
 
 #### payment.total
 
-Return the total cost, in the database default currency, of the payments of subscriptions that match filter criteria. Projected totals are obtained by setting `filter.paymentDate.lt` to a future date.
+Return the total cost, in the database preferred currency, of the payments of subscriptions that match filter criteria. Projected totals are obtained by setting `filter.paymentDate.lt` to a future date.
 
 ```go
 type PaymentTotalRequest struct {
@@ -432,16 +432,16 @@ The conditions below are **logical** errors checked after request validation suc
 
 #### Cross-cutting
 
-Conversions to the preferred currency follow [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md). `currency.convert` fetches its rate from the exchange rate provider without using the cache; the derived cost fields of subscriptions and payments read it from the cache, or fetch it from the provider when it is not cached.
+Conversions to the preferred currency follow [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md). `currency.convert` fetches its rate from the exchange rate provider without using the cache; the derived cost fields of subscriptions and payments read it from the cache, or fetch it from the provider when it is not cached. Rates for dates after the last date the provider has published a rate for are never cached. These are future dates, and today until its rate is published. So any conversion at those dates calls the provider, even when every published rate it needs is cached (see [Open questions](./20261113-currency-service.md#open-questions)). Operations that update the exchange rate cache fail with a database error if that write fails (see step 8 of `ExchangeRates` in the [Exchange Rate Service](./20261113-currency-service.md#exchange-rate-service)).
 
 - `exchange_rate_unavailable` — The provider has no rate for the requested date. Only `currency.convert` returns it; elsewhere, a missing rate makes the affected converted cost fields null.
-- `exchange_rate_provider_unavailable` — A conversion needs a rate that is not cached, and the provider could not be reached or failed transiently (network error, timeout, rate limit, unexpected response). Returned by every operation that converts. For `subscription.start` it is returned after the write is committed, so the subscription may already exist.
+- `exchange_rate_provider_unavailable` — A conversion needs a rate that is not cached (which includes any date after the provider's last published date), and the provider could not be reached or failed transiently (network error, timeout, rate limit, unexpected response). Returned by every operation that converts. For `subscription.start` it is returned after the write is committed, so the subscription may already exist.
 
 Operations not listed below rely on struct validation only (for example `reminder.list`, `preferences.get`, `preferences.set`).
 
 #### subscription.list
 
-- `exchange_rate_provider_unavailable` — A derived cost field of a subscription in the result set needs a rate that is not cached, and the provider failed transiently.
+- `exchange_rate_provider_unavailable` — Same as Cross-cutting, for a derived cost field of a subscription in the result set.
 
 #### subscription.get
 
@@ -504,7 +504,7 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 #### payment.list / payment.total
 
-- `exchange_rate_provider_unavailable` — A payment in the result set needs a rate that is not cached, and the provider failed transiently.
+- `exchange_rate_provider_unavailable` — Same as Cross-cutting, for a payment in the result set.
 
 `payment.total` uses the same payment derivation and date window as `payment.list`; errors are identical.
 
@@ -526,7 +526,7 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 #### currency.convert
 
-- `exchange_rate_unavailable` — The provider has no rate for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today): `exchangeOn` is before the first date the provider publishes the pair for, or the provider does not publish the pair. Mapped from the Exchange Rate Service's `ErrRateUnavailable`.
+- `exchange_rate_unavailable` — The provider has no rate for `currency`, the preferred currency, and `exchangeOn` (after defaulting `exchangeOn` to today): `exchangeOn` is before the first date the provider publishes the pair for, the provider does not publish the pair, or the provider's response contradicts the dates it says it covers. Mapped from the Exchange Rate Service's `ErrRateUnavailable`.
 - `exchange_rate_provider_unavailable` — The provider could not be reached or failed transiently. Mapped from the Exchange Rate Service's `ErrRateProviderUnavailable`.
 
 ## Shared types
@@ -680,7 +680,7 @@ type Payment struct {
   BillingPeriodID  string    `json:"billingPeriodId"`
   BillingCurrency  string    `json:"billingCurrency"`
   BillingCost      string    `json:"billingCost"`
-  Cost             *string   `json:"cost"` // in the database default currency, converted at the latest rate published on or before the payment date; null when that rate is missing
+  Cost             *string   `json:"cost"` // in the database preferred currency, converted at the latest rate published on or before the payment date; null when that rate is missing
 }
 ```
 
