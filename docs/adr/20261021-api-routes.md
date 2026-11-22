@@ -14,7 +14,7 @@ REST mapping for operations in [Operations](./20261018-operations.md). JSON rout
   - A nested object adds a bracket level: `filter[name][value]=netflix&filter[name][operator]=contains`, `filter[startOn][gte]=2026-01-01&filter[startOn][lt]=2026-06-01`.
   - A slice uses a numeric index: `filter[tags][values][0]=work&filter[tags][values][1]=personal`.
   - `sort` is set only when the request struct has `sort` (`subscription.list`, `reminder.list`). Each element is one key, and the index is the key order: `sort[0][field]=name&sort[0][dir]=asc&sort[1][field]=monthlyCost&sort[1][dir]=desc`. `dir` may be omitted.
-- **Lookup helpers** (`icon.fetch`, `currency.convert`) use `GET` with query parameters matching the operation request fields (after applying documented defaults in the handler before validation).
+- **Lookup helpers** (`icon.fetch`, `currency.convert`) use `POST` with form fields matching the operation request fields (after applying documented defaults in the handler before validation).
 
 ## subscriptions
 
@@ -52,5 +52,5 @@ REST mapping for operations in [Operations](./20261018-operations.md). JSON rout
 
 ## utilities
 
-- `icon.fetch`: `POST` `/icons/fetch` (body: exactly one of `fromImageUrl`, `fromDomain`, or `fromSubscriptionId`)
+- `icon.fetch`: `POST` `/icons/fetch` (body: exactly one of `fromImageUrl`, `fromDomain`, or `fromSubscription`)
 - `currency.convert`: `POST` `/currency/convert`

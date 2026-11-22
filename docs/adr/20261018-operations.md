@@ -44,7 +44,7 @@ This document provides a list of operations that can be performed on an existing
 
 ### Utilities
 
-- `icon.fetch`: resolve a base64-encoded PNG from a favicon URL, a domain, or another subscription’s stored `icon` (or set `iconAuto` on `subscription.start` / `subscription.edit`)
+- `icon.fetch`: resolve an icon (a data URI of a 64×64 PNG) from an image URL, a domain, or another subscription’s stored `icon` (or set `iconAuto` on `subscription.start` / `subscription.edit`)
 - `currency.convert`: convert an amount in a billing currency to the database preferred currency at a given exchange date; a standalone utility, not used by the other operations
 
 ## Specification of Operations
@@ -123,7 +123,7 @@ type SubscriptionGetByNameResponse struct {
 
 Add a new subscription; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change). When `billingCurrency` is omitted, the service sets `billing_currency` to the database preferred currency before persist.
 
-When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to `name` (after validation, before persist). The request must not include `icon` when `iconAuto` is true.
+When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to the part of `name` before the first `/` (after validation, before persist; see [Icon Service usage](./20261021-icon-service.md#usage)). The request must not include `icon` when `iconAuto` is true.
 
 The response `subscription` is derived after the write is committed, so its converted cost fields follow [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md).
 
@@ -154,7 +154,7 @@ Edit subscription metadata or the latest billing period. Omitted (nil) fields ar
 
 `addTags` and `removeTags` add or remove individual tags without replacing the full set. They are idempotent: adding a tag that already exists or removing a tag that does not exist is a no-op. When more than one tag field is present in a single request, apply in order: `tags` replacement, then `removeTags`, then `addTags`.
 
-When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to the subscription name after applying other metadata fields in the same request (or the stored name if `name` is omitted). The request must not include `icon` when `iconAuto` is true (including a non-nil `icon` set to `""`).
+When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to the part of the subscription name before the first `/`, after applying other metadata fields in the same request (or the stored name if `name` is omitted). The request must not include `icon` when `iconAuto` is true (including a non-nil `icon` set to `""`).
 
 ```go
 // validate:"at_least_one_set" on SubscriptionEditRequest
@@ -378,19 +378,19 @@ type PreferencesSetResponse struct{}
 
 #### icon.fetch
 
-Return a base64-encoded PNG. Exactly one of `fromImageUrl`, `fromDomain`, or `fromSubscriptionId` must be provided.
+Return an icon in the [icon format](./20261021-icon-service.md#icon-format): a data URI of a 64×64 PNG (`data:image/png;base64,...`). Exactly one of `fromImageUrl`, `fromDomain`, or `fromSubscription` must be provided.
 
-When `fromImageUrl` or `fromDomain` is set, fetch a favicon over the network. When `fromSubscriptionId` is set, load the subscription by ID and return its stored `icon` field as-is (no network fetch).
+When `fromImageUrl` or `fromDomain` is set, fetch the icon over the network: `fromDomain` through FaviconDL, `fromImageUrl` by downloading and normalizing the image (http/https only). When `fromSubscription` is set, load the subscription by **name** (case-insensitive exact match, as in `subscription.getByName`) and return its stored `icon` field as-is (no network fetch). The name is the lookup key because users know subscriptions by name, not by ID. See the [Icon Service](./20261021-icon-service.md#usage) for how the UI, CLI and MCP use this operation.
 
 ```go
 type IconFetchRequest struct {
-  FromImageUrl       string `json:"fromImageUrl,omitempty"       validate:"required_without=FromDomain FromSubscriptionId,excluded_with=FromDomain FromSubscriptionId"`
-  FromDomain         string `json:"fromDomain,omitempty"         validate:"required_without=FromImageUrl FromSubscriptionId,excluded_with=FromImageUrl FromSubscriptionId"`
-  FromSubscriptionId string `json:"fromSubscriptionId,omitempty" validate:"required_without=FromImageUrl FromDomain,excluded_with=FromImageUrl FromDomain"`
+  FromImageUrl     string `json:"fromImageUrl,omitempty"     validate:"required_without=FromDomain FromSubscription,excluded_with=FromDomain FromSubscription"`
+  FromDomain       string `json:"fromDomain,omitempty"       validate:"required_without=FromImageUrl FromSubscription,excluded_with=FromImageUrl FromSubscription"`
+  FromSubscription string `json:"fromSubscription,omitempty" validate:"required_without=FromImageUrl FromDomain,excluded_with=FromImageUrl FromDomain"` // subscription name
 }
 
 type IconFetchResponse struct {
-  Icon string `json:"icon"` // base64-encoded PNG
+  Icon string `json:"icon"` // data URI of a 64×64 PNG
 }
 ```
 
@@ -457,14 +457,14 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 - `subscription_name_taken` — The request would create a new subscription, but another subscription already has this `name` (case-insensitive). Restarting an **inactive** subscription with the same name is allowed.
 - `billing_period_not_consecutive` — Ending the current billing period and opening a new one would violate non-overlap or consecutivity (`previous.ends_on` must equal `new.starts_on`).
-- `icon_fetch_failed` — `iconAuto` is true and the favicon could not be resolved for `name` as domain.
+- `icon_fetch_failed` — `iconAuto` is true and the icon could not be resolved for `name` as domain (see `icon.fetch`). Returned before the write, so nothing is persisted.
 - `exchange_rate_provider_unavailable` — Same as `subscription.list`, for the returned subscription. The write has already been committed.
 
 #### subscription.edit
 
 - `subscription_not_found` — No subscription exists with the given `id`.
 - `subscription_name_taken` — `name` is changed to a value that another subscription already has (case-insensitive).
-- `icon_fetch_failed` — `iconAuto` is true and the favicon could not be resolved for the effective subscription name.
+- `icon_fetch_failed` — `iconAuto` is true and the icon could not be resolved for the effective subscription name (see `icon.fetch`). Returned before the write, so nothing is persisted.
 
 #### subscription.cancel
 
@@ -522,7 +522,7 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 #### icon.fetch
 
-- `icon_fetch_failed` — The icon could not be obtained: favicon fetch failed for the given URL or domain; or (when `fromSubscriptionId` is set) no subscription exists with that ID, or the subscription’s stored `icon` is empty. These cases are indistinguishable by error code by design.
+- `icon_fetch_failed` — The icon could not be obtained: no icon was found for the domain or URL, the URL is not http/https, the response was not a supported image, or the request failed (network error, timeout, oversized body); or (when `fromSubscription` is set) no subscription exists with that name, or the subscription’s stored `icon` is empty. These cases are indistinguishable by error code by design; the Icon Service's `ErrNotFound`, `ErrNotAnImage` and `ErrFailed` all map to it.
 
 #### currency.convert
 

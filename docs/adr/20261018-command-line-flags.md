@@ -184,7 +184,7 @@ Exactly one of:
 - `--tag` — repeat for each tag
 - `--notes`
 - `--icon` — not with `--icon-auto`
-- `--icon-auto` — fetch favicon using `name` as domain; not with `--icon`
+- `--icon-auto` — fetch the icon using `name` as domain; not with `--icon`
 - `--url`
 - `--start-on` — defaults to today when omitted
 - `--frequency` (required) — positive integer (months)
@@ -207,7 +207,7 @@ Subscription metadata:
 - `--remove-tag` — repeat; remove tags without replacing the full set (idempotent)
 - `--notes` / `--clear-notes`
 - `--icon` / `--clear-icon` — not with `--icon-auto`
-- `--icon-auto` — fetch favicon using effective subscription name; not with `--icon` or `--clear-icon`
+- `--icon-auto` — fetch the icon using effective subscription name; not with `--icon` or `--clear-icon`
 - `--url` / `--clear-url`
 
 Latest billing period:
@@ -294,7 +294,7 @@ Exactly one of:
 
 - `--from-image-url`
 - `--from-domain`
-- `--from-subscription-id`
+- `--from-subscription` — subscription name (case-insensitive)
 
 ### `currency-convert` (`currency.convert`)
 
