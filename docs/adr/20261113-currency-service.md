@@ -15,7 +15,7 @@ The service supports the intersection of:
 
 The list is generated ahead of time, committed to the repository and embedded into the binary, so building, testing and running the app never need the network.
 
-The list is add-only: once a currency is supported, it stays in the list, even after it is retired in CLDR or Frankfurter. Billing periods are stored with their `billing_currency` and may span years, so a currency retired after it was added must stay convertible for the dates it was in use. Frankfurter keeps serving historical rates for retired currencies (for example, USD/HRK is covered until 2023-01-14, when Croatia adopted the euro). Removing a code would make stored data fail validation and conversion. Enforcing this in the generator (merging the previous list into the new one) is out of scope for now: the generator rebuilds the list from its inputs, and a regenerated list that drops a code must be caught in review and the code restored by hand.
+The list is add-only: once a currency is supported, it stays in the list, even after it is retired in CLDR or Frankfurter. Billing periods are stored with their `billing_currency` and may span years, so a currency retired after it was added must stay convertible for the dates it was in use. Frankfurter keeps serving historical rates for retired currencies (for example, USD/HRK is covered until 2023-01-14, when Croatia adopted the euro). Removing a code would make stored data fail validation and conversion. Enforcing this in the generator (merging the previous list into the new one) is out of scope for now: the generator rebuilds the list from its inputs, and a regenerated list that drops a code must be caught in review and the code restored by hand (see [Open questions](#open-questions)).
 
 ### CLDR version
 
@@ -63,6 +63,10 @@ for it := currency.Query(); it.Next(); {
 `Symbol` is the standard CLDR symbol for English and is only a display hint; it is not locale-aware. Standard English symbols tell currencies apart (`$` for USD, `CA$` for CAD, `A$` for AUD, `CN¥` for CNY); no two active currencies share one in CLDR 32. `currency.NarrowSymbol` is not used, because it gives `$` for every dollar and `¥` for both JPY and CNY.
 
 `Scale` comes from the `Standard` rounding kind, which applies to non-cash amounts such as subscription billing. The rounding increment that `Rounding` also returns is dropped: it is 1 for every currency under `Standard`. Cash increments (for example 0.05 for CHF) only exist under `currency.Cash`, which the app does not use.
+
+### Rounding
+
+Every amount the app stores or derives in a currency is rounded to the `Scale` of that currency in this list, half to even (bankers' rounding, the default of govalues/decimal). This list is the only source of a currency's number of decimals: the app never uses the ISO 4217 exponent or a default scale, because every code it handles is in the list (see [Validation](#validation)). Stored `billing_cost` values are rounded on save (see [operations](./20261018-operations.md#notes)); derived amounts are rounded by their own formulas (see [subscription derived fields](./20261018-subscription-derived-fields.md#shared-functions)) or by `Convert` (see [Currency Service](#currency-service)).
 
 ### Generation
 
@@ -137,6 +141,8 @@ URLs are built with `url.JoinPath` for path segments and `url.Values` for query 
 ### Testing
 
 Client tests run against an `httptest.Server` injected with `WithBaseURL`, with response fixtures under `testdata/`. Services that depend on the client use a small interface they define, so their tests can use a fake.
+
+`FetchRates` has a test with a recorded Frankfurter response where `from` has no published rate (a weekend). It checks that the map includes the latest published date before `from`. `ExchangeRates` relies on that date to resolve a published date without its own rate (step 5), so if Frankfurter drops it, the test fails instead of those dates silently becoming unavailable. Re-record the fixture when the client is changed against a new Frankfurter version.
 
 ## Exchange Rate Service
 
@@ -296,12 +302,17 @@ Public methods:
 
 - func Convert(baseAmount decimal.Decimal, baseCurrency string, quoteCurrency string, exchangeRate decimal.Decimal) (quoteAmount decimal.Decimal, error)
 
-1. If `baseCurrency` is the same as `quoteCurrency`, the result is `baseAmount` and `exchangeRate` is ignored.
-2. Otherwise, the result is `baseAmount` multiplied by `exchangeRate`.
-3. In both cases, it rounds the result using the default rounding of govalues/decimal (half to even, aka bankers' rounding) to the scale of the quote currency: `CurrencyByCode(quoteCurrency).Scale`.
+1. If `baseCurrency` or `quoteCurrency` is not found by `CurrencyByCode`, return an error wrapping `ErrUnsupportedCurrency` that names the code, and a zero amount. Callers check the error and never use the zero amount.
+2. If `baseCurrency` is the same as `quoteCurrency`, the result is `baseAmount` and `exchangeRate` is ignored.
+3. Otherwise, the result is `baseAmount` multiplied by `exchangeRate`.
+4. In both cases, it rounds the result to the scale of `quoteCurrency`, as described in [Rounding](#rounding).
 
-Rounding also applies when the currencies match, so every converted amount has the scale of its currency whether or not a rate was used. For example, `9.999` EUR to EUR gives `10.00`.
+Rounding also applies when the currencies match, so every converted amount has the scale of its currency whether or not a rate was used. For a stored `billing_cost`, which is already rounded on save, this changes nothing: the converted amount equals `billing_cost`. It matters only for `currency.convert`, whose `amount` is not rounded on input. For example, `9.999` EUR to EUR gives `10.00`.
+
+Validation rejects unsupported codes before they reach the database (see [Validation](#validation)), so `ErrUnsupportedCurrency` means a programming error or a stored code that was removed from the list (see [Currencies List](#currencies-list)). Operations return it as an internal error.
 
 ## Open questions
+
+- **Automatic add-only enforcement.** The add-only rule of the [Currencies List](#currencies-list) depends on reviewers. Enforcing it automatically is out of scope for now. Options include having the generator merge the previous `currencies.json` into the new one, or a CI check that fails when a code disappears. Until then, a regenerated list that drops a code would make stored `billing_currency` and `preferences.currency` values fail validation, and `Convert` would fail with `ErrUnsupportedCurrency` when converting from or to them.
 
 - **Uncached today and future rates.** Every subscription read converts at today (`nextChargeCost`, and `cost` of a scheduled billing period), and projected payments convert at future dates. Future dates are always after the coverage `end_date`. Today is after it until the providers publish its rate, and on days they don't publish (weekends and holidays for the providers of the pair). Such dates are unpublished and never cached (step 6). As a result, a read that involves a billing currency other than the preferred currency calls `FetchCoverage` and `FetchRates` whenever it needs an unpublished date, even when every published rate it needs is cached. Projected payments always need one; `nextChargeCost` needs one only while today is unpublished. Such reads depend on the network, use up the rate limit, and fail with `exchange_rate_provider_unavailable` when offline. Options include caching the rate resolved for an unpublished date for a limited time, or falling back to the latest cached rate for the pair. Neither is decided yet.
