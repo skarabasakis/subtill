@@ -3,7 +3,7 @@ CREATE TABLE subscriptions (
     name    TEXT NOT NULL COLLATE NOCASE UNIQUE,
     "group" TEXT,
     notes   TEXT,
-    icon    TEXT,
+    icon    TEXT CHECK (icon IS NULL OR icon GLOB 'data:image/png;base64,?*'),
     url     TEXT
 );
 

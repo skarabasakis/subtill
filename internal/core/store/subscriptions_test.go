@@ -195,7 +195,7 @@ func TestSubscriptions(t *testing.T) {
 		t.Run("reads back all columns when subscription is inserted", func(t *testing.T) {
 			db := newDB(t)
 			record := domain.SubscriptionRecord{
-				ID: "01", Name: "Netflix", Group: "Video", Notes: "family", Icon: "data:x", URL: "https://netflix.com",
+				ID: "01", Name: "Netflix", Group: "Video", Notes: "family", Icon: "data:image/png;base64,iVBORw0KGgo=", URL: "https://netflix.com",
 			}
 
 			require.NoError(t, subscriptions.Insert(db, record))
@@ -230,6 +230,26 @@ func TestSubscriptions(t *testing.T) {
 			assert.Zero(t, count)
 		})
 
+		t.Run("rejects insert when icon is not a PNG data URI", func(t *testing.T) {
+			for name, icon := range map[string]string{
+				"url":           "https://netflix.com/icon.png",
+				"uppercase":     "DATA:IMAGE/PNG;BASE64,AAAA",
+				"jpeg":          "data:image/jpeg;base64,AAAA",
+				"empty payload": "data:image/png;base64,",
+			} {
+				t.Run(name, func(t *testing.T) {
+					db := newDB(t)
+
+					err := subscriptions.Insert(db, domain.SubscriptionRecord{ID: "01", Name: "Netflix", Icon: icon})
+
+					assert.Error(t, err)
+					count, err := subscriptions.Count(db, nil, civil.Date{})
+					require.NoError(t, err)
+					assert.Zero(t, count)
+				})
+			}
+		})
+
 		t.Run("discards writes when transaction is rolled back", func(t *testing.T) {
 			db := newDB(t)
 			tx, err := db.Beginx()
@@ -257,6 +277,18 @@ func TestSubscriptions(t *testing.T) {
 			got, err := subscriptions.GetById(db, "01")
 			require.NoError(t, err)
 			assert.Equal(t, &updated, got)
+		})
+
+		t.Run("rejects update when icon is not a PNG data URI", func(t *testing.T) {
+			db := newDB(t)
+			insertSubscription(t, db, "01", "Netflix")
+
+			_, err := subscriptions.Update(db, domain.SubscriptionRecord{ID: "01", Name: "Netflix", Icon: "https://netflix.com/icon.png"})
+
+			assert.Error(t, err)
+			got, err := subscriptions.GetById(db, "01")
+			require.NoError(t, err)
+			assert.Equal(t, &domain.SubscriptionRecord{ID: "01", Name: "Netflix"}, got)
 		})
 
 		t.Run("reports zero rows when subscription is missing", func(t *testing.T) {
