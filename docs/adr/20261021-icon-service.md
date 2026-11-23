@@ -2,216 +2,301 @@
 
 ## Context
 
-- Each subscription can have an icon, shown next to its name in every adapter (see [UI PRD](../prd/20261103-subtill-ui.md)).
-- The `icon.fetch` operation resolves an icon from a domain, an image URL, or another subscription (see [operations](./20261018-operations.md#iconfetch)). `iconAuto` on `subscription.start` / `subscription.edit` resolves it from the subscription name, used as a domain.
-- Subscription names are free text, but by convention start with the service's domain, optionally followed by a path: `netflix.com`, `patreon.com/foo-creator`. Only names that follow this convention can have their icon fetched automatically.
-- There is no standard favicon API. The options were compared in the [external APIs review](../prd/20261022-external-apis-review.md):
-  - Google s2 and DuckDuckGo are undocumented and unsupported, and DuckDuckGo returns ICO files of varying sizes.
-  - Fetching the site and parsing `<link rel=icon>`, the manifest and `/favicon.ico` ourselves (as self-hosted besticon does) keeps domains private, but means writing and maintaining an HTML scraper and handling SVG.
-  - FaviconDL is documented, needs no key, does that discovery for us, falls back to Google/DuckDuckGo itself, and returns an exact square PNG at a requested size.
+- Each subscription can have an icon.
+- The icon service resolves an icon from a domain or an image URL. It sits below the operations layer, which validates input and calls it (see [operations](./20261018-operations.md#iconfetch)). It does not use the database: copying another subscription's icon is a plain store read, done by the operations layer.
 
 ## Decision
 
-- Domains are resolved through FaviconDL. Arbitrary image URLs are downloaded and normalized by our own image client.
-- Icons are stored in the database as data URIs (see [icon format](#icon-format)). Subtill is a single SQLite file, so icons travel with the data, need no asset directory, and every adapter can return them as-is.
-- An icon is fetched only when a request asks for it (`icon.fetch`, `iconAuto`). The service does not cache or refresh icons: a stored icon is replaced only when the subscription is edited.
-- There is no fallback beyond FaviconDL's own. In particular, the subscription's `url` is not used to derive a domain.
+- Domains are resolved through FaviconDL. FaviconDL is keyless and answers with an image, so it needs no API client: the service builds its URL and downloads it like any other image URL.
+- The `icon` package owns the whole path from URL to stored icon: it fetches raw bytes, then decodes, normalizes and encodes them.
+- Icons are stored in the database as data URIs (see [icon format](#icon-format)). Subtill is a single SQLite file, so icons travel with the data and need no asset directory.
+- The service fetches an icon only when called. It does not cache or refresh icons.
+- There is no fallback beyond FaviconDL's own.
 
 ### Packages
 
-Following the [currency service](./20261113-currency-service.md) layout:
-
-- `internal/core/clients/favicondl`: the FaviconDL client.
-- `internal/core/clients/image`: the image client.
-- `internal/core/icon`: the icon service. It is called by the operations behind `icon.fetch` and `iconAuto`, so it serves every adapter (CLI, REST, MCP, desktop) through them.
+- `internal/core/icon`: the icon service and its steps, one file per step.
 
 ### Service
 
 ```go
-type IconService struct {
-    domains DomainIconFetcher
-    images  ImageIconFetcher
+type IconFetcher struct {
+    httpClient *http.Client
 }
 
-func NewIconService(domains DomainIconFetcher, images ImageIconFetcher) *IconService
-
-func (s *IconService) FromDomain(ctx context.Context, domain string) (icon string, err error)
-func (s *IconService) FromImageURL(ctx context.Context, rawURL string) (icon string, err error)
-func SubscriptionIcon(q sqlx.Ext, subscriptionName string) (icon string, err error)
-```
-
-- `FromDomain` and `FromImageURL` fetch over the network and map to `icon.fetch`'s `fromDomain` and `fromImageUrl`.
-- `SubscriptionIcon` maps to `fromSubscription`. It does no network fetch: it reads the stored icon of an existing subscription so it can be reused for another one. The lookup key is the subscription **name** (case-insensitive, through `store.Subscriptions.GetByName`), not the ID: CLI and MCP users know their subscriptions by name and never see IDs. It is a package function, not a method, because it is the only one that needs the database. It takes `q sqlx.Ext` like every `store` method, so the caller decides between the pool and a transaction.
-- `DomainIconFetcher` and `ImageIconFetcher` are defined by the service and list only the method it calls. The two clients satisfy them.
-
-### Usage
-
-**Domain from a subscription name.** The domain is the part of the name before the first `/`: `patreon.com/foo-creator` gives `patreon.com`. The caller extracts it before calling `FromDomain`. The full name is unchanged; in the UI, the same prefix also becomes the default group (see [UI PRD](../prd/20261103-subtill-ui.md)). That is the UI for autofetch, and the operations for `iconAuto`. A name without a domain-like prefix (e.g. `Netflix`) makes FaviconDL answer `400 Invalid domain`, hence `ErrNotFound`.
-
-**Desktop UI: Add Subscription drawer** (see [UI PRD](../prd/20261103-subtill-ui.md)):
-
-- **Autofetch:** when the user fills in the name, the drawer calls `icon.fetch` with `fromDomain` set to the name's domain, and shows the result on the icon button. It only calls when the domain changes and looks like a domain (it contains a dot), and waits until the user pauses typing, so FaviconDL gets one request per domain rather than one per keystroke. A failure is silent: the icon stays empty and the user can set it manually.
-- **Manual:** when the name doesn't follow the convention, or the autofetched icon is wrong, the user clicks the icon button and either:
-  - pastes an image URL, which calls `icon.fetch` with `fromImageUrl`; or
-  - picks an existing subscription from a dropdown that shows each subscription with its icon, which reuses that icon (`fromSubscription`).
-
-The drawer then sends the icon's data URI as `icon` in `subscription.start`. It does not use `iconAuto`, because the icon is already resolved and shown to the user before submitting.
-
-**CLI and MCP:** there is no drawer, so fetching and saving are two steps:
-
-1. Call `icon.fetch` to get an icon data URI, with one of:
-   - `{"fromDomain": "netflix.com"}`
-   - `{"fromImageUrl": "https://example.com/logo.png"}`
-   - `{"fromSubscription": "netflix.com"}` to reuse the icon of an existing subscription, looked up by name.
-2. Pass the returned data URI as `icon` to `subscription.start` or `subscription.edit`.
-
-`iconAuto` remains as a one-step shortcut for names that follow the domain convention.
-
-## Icon format
-
-An icon is a 64×64 PNG, encoded as a data URI: `data:image/png;base64,<...>`. This is the value stored in the subscription's `icon` column and returned by every service function, so clients can use it directly as an image source.
-
-64px is twice the 32px display size, so icons stay sharp on HiDPI screens.
-
-The clients return PNG bytes. Only the service encodes them as a data URI, so the format is defined in one place.
-
-## Errors
-
-The service functions return a normalized set of errors, owned by the `icon` package:
-
-- `ErrNotFound`: there is no icon for the input.
-- `ErrNotAnImage`: the source responded, but not with an image the service can decode.
-- `ErrFailed`: the icon could not be retrieved (network error, timeout, cancelled `ctx`, unexpected status, body too large).
-
-The clients and the store never leak their own errors. The service wraps them into one of the sentinels above, keeping the original as the cause (`%w`) for logging, so `errors.Is(err, context.DeadlineExceeded)` still works.
-
-`SubscriptionIcon` returns `ErrNotFound` both when no subscription has that name (`store.ErrNotFound`) and when it exists without an icon. Other store errors become `ErrFailed`.
-
-Operations map all three errors to `icon_fetch_failed` (see [operations](./20261018-operations.md)).
-
-## Request limits
-
-Both clients share the same limits, so a slow or hostile server cannot hang a request or exhaust memory:
-
-- **Timeout:** the default `*http.Client` has a 10s `Timeout`. Every method also takes a `ctx`, so adapters can cancel or shorten a request.
-- **Redirects:** at most 5, through `CheckRedirect`.
-- **Body size:** bodies are read through `io.LimitReader` capped at 1 MiB. A larger body returns `ErrBodyTooLarge` (mapped to `ErrFailed`).
-- **Decoded size:** before a full decode, `image.DecodeConfig` reads the header; images above 4096×4096 return `ErrNotAnImage`. This guards against decompression bombs, whose small bodies decode to huge bitmaps.
-
-## API client: FaviconDL
-
-```go
-func New(opts ...Option) *Client
+func NewIconFetcher(opts ...Option) *IconFetcher
 func WithHTTPClient(c *http.Client) Option
-func WithBaseURL(u string) Option
 
-func (c *Client) FetchIcon(ctx context.Context, domain string) (png []byte, err error)
+func (s *IconFetcher) FromDomain(ctx context.Context, domain string) (icon string, err error)
+func (s *IconFetcher) FromImageURL(ctx context.Context, rawURL string) (icon string, err error)
+
+// Steps
+func faviconURL(domain string) (string, error)
+func (s *IconFetcher) fetch(ctx context.Context, rawURL string) (body []byte, err error)
+func decodeImage(body []byte) (image.Image, error)
+func processImage(img image.Image) ([]byte, error)
+func toDataURI(png []byte) string
+
+// Used by fetch
+func validateURL(rawURL string) error
+func checkStatus(resp *http.Response) error
+func checkContentType(resp *http.Response) error
+func readBody(r io.Reader) ([]byte, error)
+
+// Caller-supplied icons
+func Validate(dataURI string) error
+func iconPNG(dataURI string) ([]byte, error)
 ```
 
-`baseURL` defaults to `https://favicondl.com`. It can be overridden for tests (`httptest.Server`).
+- `WithHTTPClient` replaces the default `*http.Client`, which is the only dependency tests vary. [fetch](#fetch) applies its request limits whatever client it is given.
+- Each step returns one of the package's error sentinels directly, wrapping its cause with `%w` for logging, so `errors.Is(err, context.DeadlineExceeded)` still works. The sentinels are grouped by the step that fails, not by whether a retry can help: the operations layer maps every one to `icon_fetch_failed` (see [operations](./20261018-operations.md#iconfetch)), so callers get no retry signal.
+- Tests use the public API from the external `icon_test` package and never touch the network. Private steps are reached through `FromDomain` and `FromImageURL`, never directly.
 
-Requests `GET {baseURL}/api/extract?url={domain}&size=64`, built with `url.Values`, never with `fmt.Sprintf`.
-The `url` parameter officially accepts a bare domain (`example.com`) as well as a full URL; FaviconDL normalizes it (lowercases the host, assumes https, strips one leading `www.`).
-Follows redirects: the endpoint answers with a 302 to `/api/proxy`, which serves the image.
-Maps the final response status as follows:
+#### FromDomain
+
+1. [faviconURL](#faviconurl) builds the FaviconDL URL for `domain`.
+2. [fetch](#fetch) downloads it.
+3. [decodeImage](#decodeimage) decodes the body.
+4. [processImage](#processimage) brings the image to 64×64 and encodes it as PNG.
+5. [toDataURI](#todatauri) wraps the PNG in a data URI, which is returned.
+
+Errors from every step are also wrapped with the domain, so logs show the request went through FaviconDL.
+
+FaviconDL documents that a successful response with `size=64` is a 64×64 PNG, so [normalization](#normalization) usually leaves it unchanged. Decoding and [re-encoding](#re-encoding) stay regardless: the guarantee covers the size and format, not the bytes, so a corrupt body, an error page served with status 200, or extra PNG chunks still have to be rejected or stripped.
+
+#### FromImageURL
+
+1. [fetch](#fetch) downloads `rawURL`.
+2. [decodeImage](#decodeimage) decodes the body.
+3. [processImage](#processimage) brings the image to 64×64 and encodes it as PNG.
+4. [toDataURI](#todatauri) wraps the PNG in a data URI, which is returned.
+
+#### faviconURL
+
+Builds `https://favicondl.com/api/extract?url={domain}&size=64` with `url.Values`, never with `fmt.Sprintf`. The base URL is a constant.
+
+##### FaviconDL
+
+- The `url` parameter officially accepts a bare domain (`example.com`) as well as a full URL; FaviconDL normalizes it (lowercases the host, assumes https, strips one leading `www.`).
+- The endpoint answers with a 302 to `/api/proxy`, which serves the image. The redirect stays on https, so it passes the [URL policy](#url-policy).
+- FaviconDL [documents](https://favicondl.com/documentation.html) that a request with `size` returns "an exact square PNG" (see [FromDomain](#fromdomain) for what the service still checks).
+
+FaviconDL's responses fit the generic [status table](#status):
 
 | Status | Meaning | Result |
 | --- | --- | --- |
-| 200 | Icon found (from the site, or from FaviconDL's Google/DuckDuckGo fallback) | the image |
-| 404 | Neither the site nor the fallback has an icon (`Upstream returned 404`; observed, not documented) | `ErrNotFound` |
+| 200 | Icon found (from the site, or from FaviconDL's Google/DuckDuckGo fallback) | the body |
 | 400 | `Invalid domain`: the input cannot be read as a hostname | `ErrNotFound` |
-| other, or network error | `502 Favicon extraction failed`, rate limiting, outages | `ErrFailed` |
+| 404 | Neither the site nor the fallback has an icon (`Upstream returned 404`; observed, not documented) | `ErrNotFound` |
+| 502, 429, other | `Favicon extraction failed`, rate limiting, outages | `ErrFetchFailed` |
 
-FaviconDL [documents](https://favicondl.com/documentation.html) that a request with `size` returns "an exact square PNG", and FaviconDL does the resizing (Lanczos, transparent padding, SVG rasterization). The client still checks the body with `image.DecodeConfig`: if it is not a 64×64 PNG (for example an error page served with status 200), it returns `ErrNotAnImage`. It never decodes or re-encodes a valid response.
+##### Errors
 
-A value that is not domain-like (e.g. `Netflix`) gets `400 Invalid domain`, hence `ErrNotFound`.
+- `ErrInvalidURL`: `domain` is empty. Returned without any request.
 
-## Image client
+##### Testing
 
-```go
-func New(opts ...Option) *Client
-func WithHTTPClient(c *http.Client) Option
+`FromDomain` runs with an `http.Client` whose `RoundTripper` records each request and returns a fixture response, so no request reaches FaviconDL.
 
-func (c *Client) FetchIcon(ctx context.Context, rawURL string) (png []byte, err error)
-```
+- It requests the exact FaviconDL URL, with the domain escaped (`a b.com`, `x.com?y=1`, a full URL).
+- An empty domain returns `ErrInvalidURL` without any request.
+- **Contract with FaviconDL:** the 400 and 404 statuses are observed, not documented. A fixture records them.
 
-Downloads an image from an arbitrary URL and normalizes it to the [icon format](#icon-format).
+#### fetch
 
-```go
-func (c *Client) FetchIcon(ctx context.Context, rawURL string) ([]byte, error) {
-	if err := validateImageURL(rawURL); err != nil {
-		return nil, err
-	}
-	body, err := c.download(ctx, rawURL)
-	if err != nil {
-		return nil, err
-	}
-	if isIconPNG(body) {
-		return body, nil
-	}
-	img, err := decodeImage(body)
-	if err != nil {
-		return nil, err
-	}
-	return encodePNG(squareIcon(img))
-}
-```
+Fetches the body at `rawURL` and returns it as received. It knows nothing about images. It composes:
 
-### URL policy
+- `validateURL`: the [URL policy](#url-policy); used for the initial URL and in `CheckRedirect`
+- `checkStatus`: the [status table](#status)
+- `checkContentType`: the [content type](#content-type) table
+- `readBody`: reads up to the [body cap](#request-limits)
 
-Only absolute `http` and `https` URLs are accepted, for the initial request and every redirect. Anything else (`file:`, `data:`, relative URLs) returns `ErrInvalidURL`, mapped to `ErrNotFound`.
+##### URL policy
 
-Destination addresses are not restricted: loopback and private-network URLs are allowed. Subtill is a single-user app, and the REST adapter is protected by a bearer token, so whoever can call `icon.fetch` already controls the machine's data. The trade-off is that a bearer-token holder can make the server request internal URLs (SSRF). The response is only ever returned as a valid 64×64 PNG, never as raw bytes, which limits what can be read that way.
+Only absolute `http` and `https` URLs with a non-empty host and no credentials are accepted, for the initial request and every redirect. Anything else (`file:`, `data:`, relative or unparsable URLs, `http://user:pass@host/`) is rejected.
 
-### Download
+Destination addresses are not restricted: loopback and private-network URLs are allowed. Subtill is a single-user app, so whoever can call the service already controls the machine's data. The trade-off is that a caller can make the service request internal URLs (SSRF). The response is only ever returned as a valid 64×64 PNG, never as raw bytes, which limits what can be read that way.
+
+##### Request limits
+
+These limits stop a slow or hostile server from hanging a request or exhausting memory:
+
+- **Timeout:** each request runs under a 10s deadline set on its `ctx`, so it holds even with a client injected through `WithHTTPClient`. Callers can also cancel or shorten a request through `ctx`.
+- **Redirects:** at most 5. `fetch` enforces this and the [URL policy](#url-policy) on its own copy of the `*http.Client`, with its own `CheckRedirect`, so an injected client cannot turn them off.
+- **Body size:** bodies are read through `io.LimitReader` capped at 1 MiB + 1 byte; reading more than 1 MiB means the body is over the cap. Retrying would get the same body, so a larger body is invalid rather than a failed fetch.
+
+The body is read in full before it is decoded, so a read error is a network error, never a truncated image.
+
+##### Status
 
 | Status | Result |
 | --- | --- |
 | 200 | continue with the body |
-| 404 | `ErrNotFound` |
-| other, or network error | `ErrFailed` |
+| 400, 404, 410 | `ErrNotFound`: the request itself won't succeed on retry |
+| other, or network error | `ErrFetchFailed` |
 
-### Format detection
+##### Content type
 
-The format comes from the body, not from the `Content-Type` header, which can be missing, wrong, or carry parameters. Decoders are registered with the `image` package, and `image.Decode` picks one by magic bytes.
+The `Content-Type` header is an early filter, not the format: it rejects responses that are clearly not images (HTML error pages, login walls, JSON errors served with status 200) before the body is read. Parameters are ignored.
+
+| `Content-Type` | Result |
+| --- | --- |
+| `image/*` | continue with the body |
+| `application/ico`, `application/x-icon` | continue with the body |
+| `application/octet-stream`, `binary/octet-stream` | continue with the body (S3, GCS and many CDNs serve uploads this way) |
+| missing | continue with the body |
+| anything else (`text/*`, `application/json`, …) | `ErrInvalid`, without reading the body |
+
+A header that passes does not decide the format: `image/svg+xml` passes and is then rejected by [decodeImage](#decodeimage).
+
+##### Errors
+
+- `ErrInvalidURL`: the URL does not parse, is relative, is not `http`/`https`, has an empty host or carries credentials; or a redirect points to such a URL. Checked before any request where possible. The client wraps `CheckRedirect` errors in `*url.Error`, so `fetch` matches `ErrInvalidURL` with `errors.Is` before falling back to `ErrFetchFailed`.
+- `ErrNotFound`: status 400, 404 or 410.
+- `ErrFetchFailed`: network error, DNS or TLS failure, timeout, cancelled `ctx`, connection dropped while reading the body, more than 5 redirects, rate limiting (429), and any status not listed in the [status table](#status) (5xx, 401, 403, 204, other 2xx/3xx/4xx). Some causes are permanent (an unknown host, a bad certificate); that is accepted.
+- `ErrInvalid`: a rejected `Content-Type`, an empty body, or a body over 1 MiB.
+
+##### Testing
+
+`FromImageURL` runs against an `httptest.Server`, which the [URL policy](#url-policy) allows.
+
+- Each `ErrInvalidURL` input, including a redirect to a non-http scheme, returns `ErrInvalidURL` and sends no request to the rejected URL.
+- Each status, too many redirects, a connection dropped mid-body and a cancelled `ctx` return their sentinel, with the cause reachable through `errors.Is`.
+- Each accepted and rejected `Content-Type`, an empty body and an oversized body.
+- An `http.Client` injected with `WithHTTPClient` without a `CheckRedirect` still gets the redirect limit and the URL policy.
+
+#### decodeImage
+
+Checks the dimensions with `image.DecodeConfig`, then fully decodes any supported format.
+
+##### Format detection
+
+The format comes from the body, not from the `Content-Type` header, which can be wrong or generic. Decoders are registered with the `image` package, and `image.Decode` picks one by magic bytes.
 
 Supported formats:
 
 - PNG, JPEG, GIF: standard library.
 - WebP: `golang.org/x/image/webp`.
-- ICO: a small ICO decoder. It picks the largest entry, which may be PNG or BMP.
+- ICO: a small ICO decoder in the `icon` package. It picks the largest entry, which may be PNG or BMP. Its `DecodeConfig` reports the dimensions from the chosen entry's own header, not the ICO directory, so the [decoded size](#decoded-size) limit applies to the embedded image.
 
-Anything else, including SVG and HTML, returns `ErrNotAnImage`. Rasterizing SVG would need a much heavier dependency; SVG favicons are still available through `FromDomain`, where FaviconDL rasterizes them.
+Anything else, including SVG and HTML, is rejected. Rasterizing SVG would need a much heavier dependency.
 
-### Normalization
+##### Decoded size
 
-The image is decoded once into an `image.Image`, transformed, and encoded as PNG once. A body that is already a 64×64 PNG is returned as is, without decoding.
+Before a full decode, the header is read with `image.DecodeConfig`; images above 4096×4096 are rejected. This guards against decompression bombs, whose small bodies decode to huge bitmaps.
+
+##### Errors
+
+- `ErrInvalid`: an unrecognized format, a corrupt or truncated image, dimensions above 4096×4096, or an ICO with no entries or only broken ones. Some causes are transient (an HTML error page served with status 200 during an outage); that is accepted.
+
+##### Testing
+
+`FromImageURL` runs against an `httptest.Server` serving image fixtures under `testdata/`: PNG, JPEG, GIF, WebP and ICO are accepted; SVG, HTML, a corrupt image, an image above 4096×4096, an ICO whose embedded PNG is above 4096×4096 and an ICO without a usable entry return `ErrInvalid`.
+
+#### processImage
+
+Pads the image to a square, resizes it to 64×64, then encodes it as PNG. This is where every fetched icon, whatever its source format, becomes a 64×64 PNG.
+
+##### Normalization
 
 - **Animated GIF:** the first frame is used.
 - **Non-square images** are centered on a transparent square canvas, with the longer side as its size. They are never cropped or stretched.
-- **Resizing** to 64×64 uses `golang.org/x/image/draw` with Catmull-Rom, for both downscaling and upscaling. Small images are upscaled and may look soft, which matches FaviconDL.
+- **Resizing** to 64×64 uses `golang.org/x/image/draw` with Catmull-Rom, for both downscaling and upscaling. Small images are upscaled and may look soft. A square 64×64 image is not resized.
+- **Bit depth:** the result is always drawn into a new 8-bit NRGBA 64×64 canvas before encoding, even when no resize is needed, so 16-bit sources come out as 8-bit PNGs.
 
-Unexported functions:
+##### Re-encoding
 
-- `validateImageURL(rawURL string) error`: `ErrInvalidURL` unless http/https
-- `(c *Client) download(ctx context.Context, rawURL string) (body []byte, err error)`: applies the status table and the body cap
-- `isIconPNG(body []byte) bool`: reports whether body is already a 64×64 PNG
-- `decodeImage(body []byte) (image.Image, error)`: checks dimensions with `DecodeConfig`, then decodes any supported format; `ErrNotAnImage` otherwise
-- `squareIcon(img image.Image) image.Image`: pads to a square and resizes to 64×64
-- `encodePNG(img image.Image) ([]byte, error)`
+Every fetched icon is decoded and re-encoded before it is returned; downloaded bytes are never returned as received, even when the body is already a 64×64 PNG. A data URI supplied by the caller is not re-encoded but checked by [Validate](#validate), which only accepts the shape re-encoding produces.
 
-## Testing
+- **Extra data is stripped.** `image/png` writes only the chunks needed for the pixels (`IHDR`, `PLTE`, `tRNS`, `IDAT`, `IEND`). Text, metadata, colour profiles and unknown chunks are dropped, so a stored icon is bounded by its pixels: about 16 KiB of raw pixel data for 64×64 8-bit RGBA, and usually a few KiB once compressed.
+- **Broken images are rejected.** A full decode reads every `IDAT` chunk and checks its CRC. A truncated or corrupt PNG fails, even when its header is valid and `image.DecodeConfig` would accept it.
 
-No test touches the network.
+This matters because:
 
-- **Clients:** tests run against an `httptest.Server`. The FaviconDL client points at it with `WithBaseURL`. The image client is given its URL directly. Images (PNG, JPEG, GIF, WebP, ICO, SVG, oversized and non-square) and error bodies are fixtures under `testdata/`.
-- **Service:** `IconService` tests use fakes of `DomainIconFetcher` and `ImageIconFetcher`. `SubscriptionIcon` runs against a real database in a temp directory, like the `store` tests.
-- **Contract with FaviconDL:** the 404 status is observed, not documented. A fixture records it, and the client is re-checked against the live API when FaviconDL changes.
+- **Privacy:** text and `eXIf` chunks can carry author, software or location metadata. Stripping them keeps that data out of the database, and out of every export, backup or copy of it.
+- **Security:** stored icons are rendered by the frontend's webview and returned to MCP and REST clients. Every stored icon is either produced by our own encoder or checked to contain nothing else, so no unchecked bytes from outside are passed downstream.
+- **Consistency:** every stored icon has the same shape, a 64×64 PNG with only the pixel chunks, whatever its source.
+
+Colour profiles (`iCCP`, `gAMA`) are not applied, so an icon that relies on one may shift slightly in colour. That is acceptable at 64×64.
+
+##### Errors
+
+- `ErrProcessingFailed`: the image could not be encoded as PNG. Close to an internal error.
+
+##### Testing
+
+- `FromImageURL` turns a non-square fixture into a 64×64 icon with transparent padding, and never crops it.
+- `FromDomain` turns a non-64×64 PNG into a 64×64 icon.
+- `FromImageURL` turns a 16-bit 64×64 PNG into an 8-bit icon that passes `Validate`.
+
+`FromImageURL` also runs against an `httptest.Server` serving fixtures under `testdata/`: a 64×64 PNG padded with extra chunks (`tEXt`, `iTXt`, `zTXt`, `eXIf`, `iCCP` and a private ancillary chunk), a truncated PNG (cut in the middle of `IDAT`), and a corrupt PNG (a valid header with a bad `IDAT` CRC and with garbled compressed data).
+
+- **Extra data is stripped:** the PNG with extra chunks is accepted, and the result contains only `IHDR`, optional `PLTE`/`tRNS`, `IDAT` and `IEND`, with the same pixels as the input. It is smaller than the input.
+- **Broken PNGs are dropped:** the truncated and corrupt PNGs are rejected with `ErrInvalid`.
+- **Output is valid:** every icon returned by `FromImageURL` and `FromDomain` in these tests passes `Validate`.
+
+#### toDataURI
+
+Wraps PNG bytes in the [icon format](#icon-format): the `data:image/png;base64,` prefix, then standard base64. Its reverse, [iconPNG](#iconpng), lives next to it, so the format is defined in one place.
+
+##### Icon format
+
+An icon is a 64×64 PNG, encoded as a data URI: `data:image/png;base64,<...>`. This is the value stored in the subscription's `icon` column and returned by every service function.
+
+64px is twice the 32px display size, so icons stay sharp on HiDPI screens.
+
+##### Errors
+
+None: base64 encoding cannot fail.
+
+##### Testing
+
+- Every icon returned by `FromImageURL` and `FromDomain` starts with `data:image/png;base64,` and its payload decodes to the PNG.
+
+### Caller-supplied icons
+
+`subscription.start` and `subscription.edit` accept an icon as a data URI (see [operations](./20261018-operations.md)). The operations layer checks it with `Validate`, through the `icon` validate tag, and stores it as received. It is rejected unless it already has the shape [processImage](#processimage) and [toDataURI](#todatauri) produce, so it keeps the guarantees of [re-encoding](#re-encoding) without being changed. The UI sends icons it got from `icon.fetch`, which always pass.
+
+#### Validate
+
+1. [iconPNG](#iconpng) extracts the PNG bytes from the data URI.
+2. The PNG must be at most 32 KiB, which is enough for any 64×64 PNG with only the pixel chunks and keeps the [storage](#consequences) bound.
+3. Its chunks must be only `IHDR`, optional `PLTE` and `tRNS`, `IDAT` and `IEND`, and the data must end exactly at `IEND`.
+4. `png.DecodeConfig` must report 64×64, before any full decode allocates the image.
+5. A full PNG decode, which checks every `IDAT` CRC, must succeed.
+
+It checks the shape, not the bytes: it does not compare the input with what `processImage` would produce. That output can change between Go versions, and a byte-for-byte check would then reject icons saved before an upgrade.
+
+##### Errors
+
+- `ErrInvalid`: any step above fails. The operations validator for the `icon` field maps it to a validation error on the field, never to `icon_fetch_failed`.
+
+##### Testing
+
+- Accepts the output of `FromImageURL` and `FromDomain` (see [processImage](#processimage)).
+- Rejects a PNG that isn't 64×64 and a body over 32 KiB with `ErrInvalid`.
+- Rejects the 64×64 PNG fixture with extra chunks, once per chunk type (`tEXt`, `iTXt`, `zTXt`, `eXIf`, `iCCP`, a private ancillary chunk), with `ErrInvalid`.
+- Rejects the truncated and corrupt PNG fixtures with `ErrInvalid`.
+- Rejects a 64×64 PNG with bytes after `IEND`, and a small PNG whose header claims huge dimensions, with `ErrInvalid`.
+
+#### iconPNG
+
+The reverse of [toDataURI](#todatauri): requires the `data:image/png;base64,` prefix and standard base64, and returns the decoded bytes. It does not check that they are a PNG; [Validate](#validate) does.
+
+##### Errors
+
+- `ErrInvalid`: the prefix is missing or the base64 is invalid.
+
+##### Testing
+
+`Validate` rejects an empty string, a URL, a data URI with another media type (`data:image/jpeg;base64,`), and invalid base64, all with `ErrInvalid`.
 
 ## Consequences
 
-- **Privacy:** every `FromDomain` call, including each `iconAuto`, sends the subscription name to favicondl.com, and through its fallback possibly to Google or DuckDuckGo. Those services learn which subscriptions the user has. We accept this in exchange for not maintaining a scraper. `FromImageURL` and `SubscriptionIcon` contact no third party beyond the given URL.
-- **Availability:** `iconAuto` depends on a free, keyless service with fair-use limits. When it fails, the operation fails with `icon_fetch_failed`; the user can retry or set the icon manually.
-- **Storage:** a 64×64 PNG data URI is typically a few kilobytes per subscription, so it is fine to store in the row and return in list responses.
+- **Privacy:** every `FromDomain` call sends the domain to favicondl.com, and through its fallback possibly to Google or DuckDuckGo. Those services learn which subscriptions the user has. `FromImageURL` contacts no third party beyond the given URL.
+- **Availability:** `FromDomain` depends on a free, keyless service with fair-use limits. When it is unavailable, `FromDomain` returns `ErrFetchFailed`.
+- **Storage:** a 64×64 PNG data URI is typically a few kilobytes per subscription, and never more than about 43 KiB (the 32 KiB cap of `Validate` in base64), so it is fine to store in the row.
+- **Strict caller-supplied icons:** an icon supplied as a data URI is rejected, not cleaned, when it carries metadata or other extra chunks. A client that sends icons from elsewhere must strip them first, or fetch the icon through `icon.fetch`.
 - **Fallback icons:** FaviconDL's Google fallback may return a generic globe for sites without an icon. It is accepted as a found icon.
 - **Stale icons:** icons are never refreshed automatically; a site's rebrand shows only after the icon is fetched again.
+- **Status 400 means "not found" everywhere:** the generic status table maps 400 to `ErrNotFound` for any server, not only FaviconDL, because a rejected request won't succeed on retry.

@@ -68,6 +68,7 @@ Project-registered tags used in request and filter structs (in addition to built
 |-----|----------|
 | `decimal` | Non-empty valid non-negative decimal string (`govalues/decimal` rules). |
 | `currency` | Non-empty ISO 4217 code in the supported currencies list (see [Validation](./20261113-currency-service.md#validation)). |
+| `icon` | Empty, or a value accepted by `icon.Validate`: a `data:image/png;base64,` data URI of a PNG of at most 32 KiB (see [Validate](./20261021-icon-service.md#validate)). Empty passes so that `subscription.edit` can clear the icon with `""`. `ErrInvalid` from `Validate` is a validation error on the field, never `icon_fetch_failed`: nothing was fetched. |
 | `date_range` | Struct-level on `DateRangeFilter`: if both bounds are set, `gte < lt` (calendar dates). |
 | `int_range` | Struct-level on `IntegerRangeFilter`: if both bounds are set, `gte <= lte`. |
 | `decimal_range` | Struct-level on `DecimalRangeFilter`: if both bounds are set, compare with `govalues/decimal` (`gte <= lte`). |
@@ -123,7 +124,7 @@ type SubscriptionGetByNameResponse struct {
 
 Add a new subscription; if it exists and is inactive, start a new cycle; if it is active, end the current cycle and start a new one (e.g. price change). When `billingCurrency` is omitted, the service sets `billing_currency` to the database preferred currency before persist.
 
-When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to the part of `name` before the first `/` (after validation, before persist; see [Icon Service usage](./20261021-icon-service.md#usage)). The request must not include `icon` when `iconAuto` is true.
+When `iconAuto` is true, the service resolves `icon` via `icon.fetch` with `fromDomain` set to the part of `name` before the first `/` (after validation, before persist; see [Icon Service](./20261021-icon-service.md)). The request must not include `icon` when `iconAuto` is true.
 
 The response `subscription` is derived after the write is committed, so its converted cost fields follow [Handling of unavailable exchange rates](./20261120-unavailable-exchange-rates.md).
 
@@ -133,7 +134,7 @@ type SubscriptionAddRequest struct {
   Group           string    `json:"group"`
   Tags            []string  `json:"tags"`
   Notes           string    `json:"notes"`
-  Icon            string    `json:"icon" validate:"excluded_if=IconAuto true"`
+  Icon            string    `json:"icon" validate:"excluded_if=IconAuto true,icon"`
   IconAuto        bool      `json:"iconAuto,omitempty"`
   URL             string    `json:"url"`
   StartOn         time.Date `json:"startOn"` // defaults to today when zero; empty allowed
@@ -168,7 +169,7 @@ type SubscriptionEditRequest struct {
   AddTags    *[]string  `json:"addTags,omitempty"`
   RemoveTags *[]string  `json:"removeTags,omitempty"`
   Notes      *string    `json:"notes,omitempty"`
-  Icon       *string    `json:"icon,omitempty" validate:"excluded_if=IconAuto true"` // or `iconAuto`; or use `icon.fetch` manually
+  Icon       *string    `json:"icon,omitempty" validate:"excluded_if=IconAuto true,icon"` // or `iconAuto`; or use `icon.fetch` manually
   IconAuto   *bool      `json:"iconAuto,omitempty"`
   URL        *string    `json:"url,omitempty"`
 
@@ -380,7 +381,7 @@ type PreferencesSetResponse struct{}
 
 Return an icon in the [icon format](./20261021-icon-service.md#icon-format): a data URI of a 64×64 PNG (`data:image/png;base64,...`). Exactly one of `fromImageUrl`, `fromDomain`, or `fromSubscription` must be provided.
 
-When `fromImageUrl` or `fromDomain` is set, fetch the icon over the network: `fromDomain` through FaviconDL, `fromImageUrl` by downloading and normalizing the image (http/https only). When `fromSubscription` is set, load the subscription by **name** (case-insensitive exact match, as in `subscription.getByName`) and return its stored `icon` field as-is (no network fetch). The name is the lookup key because users know subscriptions by name, not by ID. See the [Icon Service](./20261021-icon-service.md#usage) for how the UI, CLI and MCP use this operation.
+When `fromImageUrl` or `fromDomain` is set, fetch the icon over the network: `fromDomain` through FaviconDL, `fromImageUrl` by downloading and normalizing the image (http/https only). When `fromSubscription` is set, the operation does not call the icon service: it loads the subscription by **name** through `store.Subscriptions.GetByName` (case-insensitive exact match, as in `subscription.getByName`) and returns its stored `icon` field as-is (no network fetch, no re-encoding). The name is the lookup key because users know subscriptions by name, not by ID.
 
 ```go
 type IconFetchRequest struct {
@@ -522,7 +523,7 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 #### icon.fetch
 
-- `icon_fetch_failed` — The icon could not be obtained: no icon was found for the domain or URL, the URL is not http/https, the response was not a supported image, or the request failed (network error, timeout, oversized body); or (when `fromSubscription` is set) no subscription exists with that name, or the subscription’s stored `icon` is empty. These cases are indistinguishable by error code by design; the Icon Service's `ErrNotFound`, `ErrNotAnImage` and `ErrFailed` all map to it.
+- `icon_fetch_failed` — The icon could not be obtained: no icon was found for the domain or URL, the URL is not http/https, the response was not a supported image, or the request failed (network error, timeout, oversized body); or (when `fromSubscription` is set) no subscription exists with that name, or the subscription’s stored `icon` is empty. These cases are indistinguishable by error code by design; the Icon Service's `ErrInvalidURL`, `ErrNotFound`, `ErrFetchFailed`, `ErrInvalid` and `ErrProcessingFailed` all map to it, and so do `store.ErrNotFound` and an empty stored `icon` for `fromSubscription`. Other store errors are internal errors.
 
 #### currency.convert
 
@@ -854,6 +855,7 @@ type ReminderFilters struct {
   - `subscription.start`: counted from `startOn`. A duration of 0 starts an ongoing billing period (no end date).
   - `subscription.cancel`: counted from the next charge date. A duration of 0 ends the subscription on the next charge date, i.e. at the end of the period already paid for.
 - `billingCost` is rounded on save. `subscription.start`, `subscription.edit`, `billingPeriod.add` and `billingPeriod.edit` round it to the scale of its billing currency (after `billingCurrency` defaults to the preferred currency) before persisting, following the [currency rounding rules](./20261113-currency-service.md#rounding). Validation accepts any number of decimals; rounding happens after validation. So every stored `billing_cost` has the scale of its `billing_currency`. On the edit operations, `required_with` makes `billingCurrency` and `billingCost` change together, so a cost is never left at the scale of a previous currency.
+- `icon` is stored as received. `subscription.start` and `subscription.edit` do not re-encode it: the `icon` validate tag already rejects metadata and extra PNG chunks, so none are persisted (see [Re-encoding](./20261021-icon-service.md#re-encoding)). Icons resolved by `iconAuto` or returned by `icon.fetch` are re-encoded by the icon service and always pass the tag.
 - `StringFilter.Operator` defaults to `equals` when omitted (apply before `validator.Struct`).
 - `PaymentFilters.PaymentDate` is required. If it is not provided, it is equivalent to `[null, current_date)`, i.e. all payments before the current date. If only `gte` is provided, `lt` defaults to the current date.
 - Reports on "specific subscriptions" can only be retrieved if the set of subscriptions can be selected with the currently defined filters (name, group, tags, status). Arbitrary sets of subscriptions that share no group or tag can't be reported on in a single request.
