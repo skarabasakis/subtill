@@ -4,23 +4,23 @@ Rules for changing `internal/core/database`. Run `go doc -all ./internal/core/da
 
 ## Scope
 
-This package creates, opens, migrates and closes subtill database files. It is the only code that opens SQLite connections; every other component receives the `*sqlx.DB` returned by `Open`. It uses `modernc.org/sqlite`, `jmoiron/sqlx` and `golang-migrate/migrate`.
+This package creates, opens, migrates and closes subtill database files. It is the only code that opens SQLite connections; every other component receives the `*sqlx.DB` returned by `Open`.
 
 ## Public API shape
 
-- The package-level `Create`, `Open`, `Info` and `SchemaVersion` delegate to the unexported `defaultService`, built from the embedded migrations with a 5s busy timeout. Never export it or make it reassignable: no caller may change the schema the program runs against.
-- `New` and `WithBusyTimeout` exist to inject a different migration source. In practice that is tests only.
-- `SchemaVersion` is always derived from the migration source by `latestVersion`, which walks it with `First`/`Next` like golang-migrate does. Never hard-code it. An empty embedded source is a build defect, so `mustNew` panics at init.
+- The package-level functions run against a default service built from the embedded migrations. Never export it or make it reassignable: no caller may change the schema the program runs against.
+- `New` exists to inject a different migration source. In practice that is tests only.
+- `SchemaVersion` is always derived from the migration source. Never hard-code it.
 
 ## Connections
 
 The exact connection strings are in [dsn.go](dsn.go).
 
-| Connection | Used for | Notes |
-| --- | --- | --- |
-| Probe | Identity and version checks in `Open` | Runs no writes and no pragma that changes the file. |
-| Main pool | The handle returned by `Open` | Foreign keys on, WAL, busy timeout, `_txlock=immediate`. |
-| Migration pool | `Create` and the migration step of `Open` | Foreign keys off, `locking_mode(EXCLUSIVE)`, `SetMaxOpenConns(1)`. |
+| Connection     | Used for                                  | Max connections | Notes                                                    |
+| -------------- | ----------------------------------------- | --------------- | -------------------------------------------------------- |
+| Probe          | Identity and version checks               | 1               | Read only                                                |
+| Main pool      | Normal application usage                  | Unlimited       | Foreign keys on, WAL, busy timeout, `_txlock=immediate`. |
+| Migration pool | `Create` and the migration step of `Open` | 1               | Foreign keys off, `locking_mode(EXCLUSIVE)`.             |
 
 - Set pragmas in the connection string, never with `db.Exec`. Pragmas apply per connection, and a pool opens connections on its own.
 - Every connection uses `mode=rw`, so opening a missing file fails instead of creating an empty database. Only `Create` creates files, with `O_EXCL`.
@@ -30,9 +30,9 @@ The exact connection strings are in [dsn.go](dsn.go).
 
 ## Identity and version checks
 
-- Every subtill database has its header `application_id` set to `SubtillAppID` (`0x53554254`, ASCII `SUBT`). `Open` checks it before anything else.
+- Every subtill database has its header `application_id` set to `SubtillAppID`. `Open` checks it before anything else.
 - Never run golang-migrate on a file that hasn't passed the identity check. Its sqlite driver creates `schema_migrations` if it's missing and reports read errors as "no version", which would modify or misreport a foreign file.
-- On the probe, read the version with a plain `SELECT version, dirty FROM schema_migrations`, after checking that the table exists. golang-migrate's `Version` is used only under the migration lock.
+- On the probe, read `schema_migrations` directly, after checking that the table exists. golang-migrate's `Version` is used only under the migration lock.
 - golang-migrate reads the migration files, applies them in order, each in its own transaction, and records the version. This package adds what it lacks:
   - the identity and version checks above;
   - a lock across processes (the driver's `Lock` only excludes migrations in the same process);
@@ -68,44 +68,39 @@ flowchart TD
   openPool --> ok["return db, closeFn"]
 ```
 
-- `SQLITE_CANTOPEN` maps to `ErrNotFound`: the file or its directory doesn't exist, it is a directory, or it can't be read. Don't add an `os.Stat` before opening.
-- A file that isn't SQLite fails when the probe is pinged, with `SQLITE_NOTADB`. Map that to `ErrNotSubtillDatabase`.
+- Don't add an `os.Stat` before opening: the probe failing to open the file is what reports `ErrNotFound`.
 - The probe is closed before the migration pool opens.
 
 ## Create
 
-1. Create the file with `os.OpenFile(path, O_RDWR|O_CREATE|O_EXCL, 0o600)`, so two processes can't both create it. A zero-byte file is a valid empty SQLite database.
-2. Run all migrations and `foreign_key_check` on a migration pool. No backup, since there is nothing to back up.
-3. Set `PRAGMA application_id`.
-4. Store `preferences.AppliedTo(locale.DefaultPreferences())` with `store.Preferences.Upsert`.
-
-If any step fails, remove `path`, `path-wal` and `path-shm`, so a failed attempt can be retried. `Create` returns no handle; callers then call `Open(path, false)`.
+- `Create` is the only code that creates database files, with `O_EXCL`, so two processes can't both create the same file.
+- No backup is taken, since there is nothing to back up.
+- If any step fails, the file and its `-wal` and `-shm` sidecars are removed, so a failed attempt can be retried.
+- `Create` returns no handle; callers then call `Open(path, false)`.
 
 ## Migration procedure
 
-Used by `Open` when `migrate` is true and the schema is outdated. Keep these steps and their order.
+Used by `Open` when `migrate` is true and the schema is outdated. These rules must hold:
 
-1. Open a migration pool, separate from the main pool. Foreign keys must be off: golang-migrate runs each file in a transaction, where `PRAGMA foreign_keys` is a no-op, so this is the only way to keep a table rebuild from cascading deletes. golang-migrate's `Close` closes the `*sql.DB` it was given, which is right because the migration step owns this pool.
-2. Take an exclusive lock with `BEGIN EXCLUSIVE; COMMIT;`. With `locking_mode(EXCLUSIVE)` the connection keeps it until it closes. In WAL mode every open connection holds a shared lock, so if another process has the file open, this fails after `busy_timeout` and `Open` returns `ErrDatabaseInUse`. Never change the schema while another process is using it.
-3. Re-read the version with golang-migrate's `Version` under the lock, since another process may have migrated the file after the probe. Apply the same checks, and stop without a backup if the schema is already current.
-4. Back up with `VACUUM INTO '<path>.<YYYYMMDDTHHMMSS>.v<from>.bak'`. This writes a consistent copy that includes commits still in `path-wal`.
-5. Run `Up`. `ErrNoChange` is not an error.
-6. Run `PRAGMA foreign_key_check`. Any row fails the migration.
-7. Close the migration pool.
+- Migrate on a pool separate from the main pool, with foreign keys off: golang-migrate runs each file in a transaction, where `PRAGMA foreign_keys` is a no-op, so this is the only way to keep a table rebuild from cascading deletes.
+- Take the exclusive lock before re-reading the version, since another process may have migrated the file after the probe. Stop without a backup if the schema is already current.
+- Never change the schema while another process has the file open. In WAL mode every open connection holds a shared lock, so the exclusive lock fails and `Open` returns `ErrDatabaseInUse`.
+- Take the backup before running `Up`, with `VACUUM INTO` so it includes commits still in the WAL.
+- Run `PRAGMA foreign_key_check` after `Up`. Any row fails the migration.
 
-If step 5 or 6 fails, close the pool, delete `path-wal` and `path-shm`, copy the backup to a temp file next to `path`, rename it over `path`, and return `ErrMigrationFailed` with the backup path. This is needed because golang-migrate leaves a failed file dirty, and an upgrade across several versions commits each file separately.
+If the migration or the foreign key check fails, restore the backup over the file and return `ErrMigrationFailed` with the backup path. This is needed because golang-migrate leaves a failed file dirty, and an upgrade across several versions commits each file separately.
 
 Never delete backups. They are kept after a successful migration too.
 
 ## Closing
 
 - Callers close the pool with `closeFn`, never `db.Close()`.
-- `closeFn` runs `PRAGMA wal_checkpoint(TRUNCATE)` (best effort, errors ignored) and then `db.Close()`. SQLite checkpoints on its own only when the last connection closes, so without this, commits would stay in `path-wal` for as long as another process keeps the file open, and a user who copies only the database file would lose them.
-- `closeFn` must be safe to call more than once; later calls return nil.
+- `closeFn` checkpoints the WAL before closing. SQLite checkpoints on its own only when the last connection closes, so without this, commits would stay in the WAL for as long as another process keeps the file open, and a user who copies only the database file would lose them.
+- `closeFn` must be safe to call more than once.
 
 ## Errors
 
-Return the sentinels in [errors.go](errors.go). Schema errors are wrapped in a `*SchemaError` carrying `Found`, `Expected` and `Backup`; callers use `errors.Is` for the kind and `errors.As` for the details.
+Return the sentinels in [errors.go](errors.go). Schema errors are wrapped in a `*SchemaError`; callers use `errors.Is` for the kind and `errors.As` for the details.
 
 | Error | Returned by | Meaning |
 | --- | --- | --- |
@@ -136,14 +131,13 @@ Principles:
 
 - Use real files in `t.TempDir()`, never `:memory:`. The behavior under test is file-based.
 - The tests run in `wails3 task test` without a build tag, so each one stays well under a second.
-- Check the disk, not just the error. Failure cases also assert unchanged bytes (`digest`), no sidecars (`assertNoSidecars`), no backup (`backups`) and no open connections (`assertNoOpenConnections`).
+- Check the disk, not just the error. Failure cases also assert unchanged bytes, no sidecars, no backup and no open connections.
 
 Layout:
 
-- All tests are external (`package database_test`) and use the public API. Tests that need other migrations build a `Service` with `New(migrationsFS(...), WithBusyTimeout(100*time.Millisecond))` through the `newService` fixture.
-- Raw SQLite helpers live in `helpers_test.go`, also in `database_test`. They open files with their own connection strings and don't reuse unexported code, so there are no internal test files and no `export_test.go`.
-- Tests spell out the backup file name format (`backupName`) and find backups by listing the directory (`backups`) rather than calling the package's own naming code, so an accidental format change fails a test.
-- Tests sit in the file of the feature they cover: `create_test.go`, `open_test.go`, `migration_test.go`, `info_test.go`, `service_test.go`.
+- All tests are external and use the public API. Tests that need other migrations build their own `Service` with `New`.
+- Raw SQLite helpers open files with their own connection strings and don't reuse unexported code, so there are no internal test files and no `export_test.go`.
+- Tests spell out the backup file name format and find backups by listing the directory rather than calling the package's own naming code, so an accidental format change fails a test.
 
 Keep these regression cases:
 
