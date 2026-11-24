@@ -17,6 +17,7 @@ require (
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/swaggo/swag/v2 v2.0.0-rc6
 	github.com/wailsapp/wails/v3 v3.0.0-beta.30
+	golang.org/x/image v0.41.0
 	golang.org/x/text v0.39.0
 	modernc.org/sqlite v1.44.3
 )

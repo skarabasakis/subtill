@@ -30,6 +30,9 @@ func WithHTTPClient(c *http.Client) Option
 func (s *IconFetcher) FromDomain(ctx context.Context, domain string) (icon string, err error)
 func (s *IconFetcher) FromImageURL(ctx context.Context, rawURL string) (icon string, err error)
 
+func FromDomain(ctx context.Context, domain string) (icon string, err error)
+func FromImageURL(ctx context.Context, rawURL string) (icon string, err error)
+
 // Steps
 func faviconURL(domain string) string
 func (s *IconFetcher) fetch(ctx context.Context, rawURL string) (body []byte, err error)
@@ -46,6 +49,7 @@ func Validate(dataURI string) error
 func iconPNG(dataURI string) ([]byte, error)
 ```
 
+- The package-level `FromDomain` and `FromImageURL` call a private default `IconFetcher`, which is never exported.
 - `WithHTTPClient` replaces the default `*http.Client`, which is the only dependency tests vary. [fetch](#fetch) applies its body cap whatever client it is given.
 - Each step returns one of the package's error sentinels, wrapping its cause with `%w` for logging, so `errors.Is(err, context.DeadlineExceeded)` still works. The sentinels are grouped by the step that fails, not by whether a retry can help: the operations layer maps each one to its own error code (see [operations](./20261018-operations.md#iconfetch-1)).
 - Inputs are validated by the operations layer before the service is called: `fromImageUrl` must be an absolute `http`/`https` URL with a host, and `fromDomain` must be non-empty. The service does not repeat these checks.
