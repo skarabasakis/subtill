@@ -68,7 +68,7 @@ Project-registered tags used in request and filter structs (in addition to built
 |-----|----------|
 | `decimal` | Non-empty valid non-negative decimal string (`govalues/decimal` rules). |
 | `currency` | Non-empty ISO 4217 code in the supported currencies list (see [Validation](./20261113-currency-service.md#validation)). |
-| `icon` | Empty, or a value accepted by `icon.Validate`: a `data:image/png;base64,` data URI of a PNG of at most 32 KiB (see [Validate](./20261021-icon-service.md#validate)). Empty passes so that `subscription.edit` can clear the icon with `""`. `ErrInvalid` from `Validate` is a validation error on the field, never `icon_fetch_failed`: nothing was fetched. |
+| `icon` | Empty, or a value accepted by `icon.Validate`: a `data:image/png;base64,` data URI of a PNG of at most 36 KiB (see [Validate](./20261021-icon-service.md#validate)). Empty passes so that `subscription.edit` can clear the icon with `""`. `ErrInvalid` from `Validate` is a validation error on the field, never `icon_invalid`: nothing was fetched. |
 | `date_range` | Struct-level on `DateRangeFilter`: if both bounds are set, `gte < lt` (calendar dates). |
 | `int_range` | Struct-level on `IntegerRangeFilter`: if both bounds are set, `gte <= lte`. |
 | `decimal_range` | Struct-level on `DecimalRangeFilter`: if both bounds are set, compare with `govalues/decimal` (`gte <= lte`). |
@@ -385,7 +385,7 @@ When `fromImageUrl` or `fromDomain` is set, fetch the icon over the network: `fr
 
 ```go
 type IconFetchRequest struct {
-  FromImageUrl     string `json:"fromImageUrl,omitempty"     validate:"required_without=FromDomain FromSubscription,excluded_with=FromDomain FromSubscription"`
+  FromImageUrl     string `json:"fromImageUrl,omitempty"     validate:"required_without=FromDomain FromSubscription,excluded_with=FromDomain FromSubscription,omitempty,http_url"`
   FromDomain       string `json:"fromDomain,omitempty"       validate:"required_without=FromImageUrl FromSubscription,excluded_with=FromImageUrl FromSubscription"`
   FromSubscription string `json:"fromSubscription,omitempty" validate:"required_without=FromImageUrl FromDomain,excluded_with=FromImageUrl FromDomain"` // subscription name
 }
@@ -458,14 +458,14 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 - `subscription_name_taken` — The request would create a new subscription, but another subscription already has this `name` (case-insensitive). Restarting an **inactive** subscription with the same name is allowed.
 - `billing_period_not_consecutive` — Ending the current billing period and opening a new one would violate non-overlap or consecutivity (`previous.ends_on` must equal `new.starts_on`).
-- `icon_fetch_failed` — `iconAuto` is true and the icon could not be resolved for `name` as domain (see `icon.fetch`). Returned before the write, so nothing is persisted.
+- `icon_not_found`, `icon_fetch_failed`, `icon_invalid`, `icon_processing_failed` — `iconAuto` is true and the icon could not be resolved for `name` as domain (same mapping as `icon.fetch`). Returned before the write, so nothing is persisted.
 - `exchange_rate_provider_unavailable` — Same as `subscription.list`, for the returned subscription. The write has already been committed.
 
 #### subscription.edit
 
 - `subscription_not_found` — No subscription exists with the given `id`.
 - `subscription_name_taken` — `name` is changed to a value that another subscription already has (case-insensitive).
-- `icon_fetch_failed` — `iconAuto` is true and the icon could not be resolved for the effective subscription name (see `icon.fetch`). Returned before the write, so nothing is persisted.
+- `icon_not_found`, `icon_fetch_failed`, `icon_invalid`, `icon_processing_failed` — `iconAuto` is true and the icon could not be resolved for the effective subscription name (same mapping as `icon.fetch`). Returned before the write, so nothing is persisted.
 
 #### subscription.cancel
 
@@ -523,7 +523,15 @@ Operations not listed below rely on struct validation only (for example `reminde
 
 #### icon.fetch
 
-- `icon_fetch_failed` — The icon could not be obtained: no icon was found for the domain or URL, the URL is not http/https, the response was not a supported image, or the request failed (network error, timeout, oversized body); or (when `fromSubscription` is set) no subscription exists with that name, or the subscription’s stored `icon` is empty. These cases are indistinguishable by error code by design; the Icon Service's `ErrInvalidURL`, `ErrNotFound`, `ErrFetchFailed`, `ErrInvalid` and `ErrProcessingFailed` all map to it, and so do `store.ErrNotFound` and an empty stored `icon` for `fromSubscription`. Other store errors are internal errors.
+Each Icon Service sentinel maps to its own code, so callers can tell a missing icon from a transient failure:
+
+- `icon_not_found` — The server answered that there is no icon (Icon Service `ErrNotFound`: status 400, 404 or 410); or, when `fromSubscription` is set, the subscription’s stored `icon` is empty.
+- `icon_fetch_failed` — The request failed and may succeed on retry (Icon Service `ErrFetchFailed`: network error, timeout, too many redirects, rate limiting, other statuses).
+- `icon_invalid` — The response was not a usable image (Icon Service `ErrInvalid`: empty or oversized body, unsupported format, corrupt image, width or height above 512).
+- `icon_processing_failed` — The image could not be encoded as PNG (Icon Service `ErrProcessingFailed`).
+- `subscription_not_found` — `fromSubscription` is set and no subscription exists with that name (`store.ErrNotFound`). Other store errors are internal errors.
+
+A `fromImageUrl` that is not an absolute `http`/`https` URL with a host is a validation error, not one of these codes.
 
 #### currency.convert
 
